@@ -1199,8 +1199,12 @@ export default function DashboardPage() {
       {activeTab !== 'bills' ? (
         <header className="app-header">
           <div className="header-top-row">
-            <div className="app-brand">
-              <Zap size={20} className="text-warning" style={{ fill: 'currentColor', color: '#eab308' }} />
+            <div className="app-brand" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <img 
+                src="/ambeeri-logo.png" 
+                alt="Ambeeri Logo" 
+                style={{ width: '28px', height: '28px', borderRadius: '6px', objectFit: 'contain' }} 
+              />
               <span className="brand-name-ar">أمبيري</span>
             </div>
             <div className="header-actions">

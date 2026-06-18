@@ -49,9 +49,16 @@ export default function LoginPage() {
  
   return (
     <div className="login-screen">
-      <div className="login-logo" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <Zap style={{ color: 'var(--primary)', width: '32px', height: '32px' }} />
-        <span className="brand-name-ar">أمبيري</span>
+      <div className="login-logo-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '8px' }}>
+        <img 
+          src="/ambeeri-logo.png" 
+          alt="Ambeeri Logo" 
+          style={{ width: '80px', height: '80px', borderRadius: '16px', objectFit: 'contain', marginBottom: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }} 
+        />
+        <div className="login-logo" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Zap style={{ color: 'var(--primary)', width: '24px', height: '24px' }} />
+          <span className="brand-name-ar">أمبيري</span>
+        </div>
       </div>
       <div className="login-tagline">النظام الذكي لإدارة اشتراكات المولدات الأهلية</div>
  
