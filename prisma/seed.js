@@ -5,8 +5,8 @@ const prisma = new PrismaClient();
 
 async function main() {
   // 1. Create Super Admin
-  const adminUsername = 'admin';
-  const adminHash = await bcrypt.hash('admin123', 10);
+  const adminUsername = 'admin.hassan';
+  const adminHash = await bcrypt.hash('P0o9i8u7y6!', 10);
   const existingAdmin = await prisma.user.findUnique({
     where: { username: adminUsername }
   });
