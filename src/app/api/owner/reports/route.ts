@@ -4,24 +4,32 @@ import { checkAuth } from '@/lib/auth';
 
 export async function GET(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
+  const generatorId = searchParams.get('generatorId');
   const boardId = searchParams.get('boardId');
   const month = searchParams.get('month');
   const year = searchParams.get('year');
 
   try {
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = (generatorId && generatorId !== 'all') ? generatorId : null;
+    }
+
     const restrictedBoardId = user.boardId && user.boardId !== 'all' ? user.boardId : null;
     const targetBoardId = restrictedBoardId || (boardId && boardId !== 'all' ? boardId : null);
 
     // Filter subscribers
     const subFilter: any = {
-      generatorId: user.generatorId,
       status: 'ACTIVE'
     };
+    if (targetGenId) {
+      subFilter.generatorId = targetGenId;
+    }
     if (targetBoardId) {
       subFilter.boardId = targetBoardId;
     }
@@ -34,9 +42,10 @@ export async function GET(request: Request) {
     const totalAmps = subscribers.reduce((sum, s) => sum + s.amps, 0);
 
     // Bill filters
-    const billFilter: any = {
-      generatorId: user.generatorId
-    };
+    const billFilter: any = {};
+    if (targetGenId) {
+      billFilter.generatorId = targetGenId;
+    }
     if (targetBoardId) {
       billFilter.boardId = targetBoardId;
     }
@@ -63,9 +72,10 @@ export async function GET(request: Request) {
     const remainingAmount = bills.reduce((sum, b) => sum + b.remainingAmount, 0);
 
     // Expense filters
-    const expenseFilter: any = {
-      generatorId: user.generatorId
-    };
+    const expenseFilter: any = {};
+    if (targetGenId) {
+      expenseFilter.generatorId = targetGenId;
+    }
     
     if (month && year) {
       const monthInt = parseInt(month);
@@ -85,28 +95,44 @@ export async function GET(request: Request) {
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
 
     // Count of boards
+    const boardFilter: any = {};
+    if (targetGenId) {
+      boardFilter.generatorId = targetGenId;
+    }
+    if (restrictedBoardId) {
+      boardFilter.id = restrictedBoardId;
+    }
     const boardsCount = await prisma.board.count({
-      where: {
-        generatorId: user.generatorId,
-        id: restrictedBoardId ? restrictedBoardId : undefined
-      }
+      where: boardFilter
     });
 
     // Overall Stats calculations
+    const overallPaymentFilter: any = {};
+    if (targetGenId) {
+      overallPaymentFilter.generatorId = targetGenId;
+    }
     const totalPaymentsSum = await prisma.payment.aggregate({
-      where: { generatorId: user.generatorId },
+      where: overallPaymentFilter,
       _sum: { amount: true }
     });
     const overallCollected = totalPaymentsSum._sum.amount || 0;
 
+    const overallDebtFilter: any = {};
+    if (targetGenId) {
+      overallDebtFilter.generatorId = targetGenId;
+    }
     const totalDebtSum = await prisma.monthlyBill.aggregate({
-      where: { generatorId: user.generatorId },
+      where: overallDebtFilter,
       _sum: { remainingAmount: true }
     });
     const overallRemainingDebt = totalDebtSum._sum.remainingAmount || 0;
 
+    const overallExpenseFilter: any = {};
+    if (targetGenId) {
+      overallExpenseFilter.generatorId = targetGenId;
+    }
     const totalExpensesSum = await prisma.expense.aggregate({
-      where: { generatorId: user.generatorId },
+      where: overallExpenseFilter,
       _sum: { amount: true }
     });
     const overallExpenses = totalExpensesSum._sum.amount || 0;

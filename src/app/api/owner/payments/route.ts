@@ -5,20 +5,27 @@ import { sendWhatsappMessage } from '@/lib/whatsapp';
 
 export async function GET(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
+  const generatorId = searchParams.get('generatorId');
   const subscriberId = searchParams.get('subscriberId');
   const boardId = searchParams.get('boardId');
 
   try {
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = (generatorId && generatorId !== 'all') ? generatorId : null;
+    }
+
     const restrictedBoardId = user.boardId && user.boardId !== 'all' ? user.boardId : null;
 
-    const whereClause: any = {
-      generatorId: user.generatorId,
-    };
+    const whereClause: any = {};
+    if (targetGenId) {
+      whereClause.generatorId = targetGenId;
+    }
 
     if (restrictedBoardId) {
       whereClause.boardId = restrictedBoardId;
@@ -55,7 +62,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -66,21 +73,33 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { billId, amount, note, ampPrice, amps } = body;
+    const { billId, amount, note, ampPrice, amps, generatorId } = body;
 
     if (!billId || amount === undefined || amount <= 0) {
       return NextResponse.json({ error: 'مُعرّف الفاتورة وقيمة المبلغ مطلوبة ويجب أن تكون أكبر من صفر' }, { status: 400 });
     }
 
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = generatorId;
+    }
+
     // Verify bill ownership
+    const whereClause: any = { id: billId };
+    if (targetGenId) {
+      whereClause.generatorId = targetGenId;
+    }
+
     const bill = await prisma.monthlyBill.findFirst({
-      where: { id: billId, generatorId: user.generatorId },
+      where: whereClause,
       include: { subscriber: true }
     });
 
     if (!bill) {
       return NextResponse.json({ error: 'الفاتورة غير موجودة أو لا تملك صلاحية الوصول لها' }, { status: 404 });
     }
+
+    const finalGenId = bill.generatorId;
 
     // Double check employee board restriction
     if (user.role === 'EMPLOYEE' && user.boardId && user.boardId !== 'all' && user.boardId !== bill.boardId) {
@@ -135,7 +154,7 @@ export async function POST(request: Request) {
 
       const existingCount = await tx.payment.count({
         where: {
-          generatorId: user.generatorId,
+          generatorId: finalGenId,
           date: {
             gte: startOfMonth,
             lte: endOfMonth
@@ -150,7 +169,7 @@ export async function POST(request: Request) {
       return await tx.payment.create({
         data: {
           receiptNumber: recNum,
-          generatorId: user.generatorId,
+          generatorId: finalGenId,
           boardId: bill.boardId,
           subscriberId: bill.subscriberId,
           billId: bill.id,
@@ -179,7 +198,7 @@ export async function POST(request: Request) {
       
       await prisma.whatsappNotification.create({
         data: {
-          generatorId: user.generatorId,
+          generatorId: finalGenId,
           subscriberId: bill.subscriberId,
           billId: bill.id,
           toPhone: whatsappPhone,

@@ -4,7 +4,7 @@ import { checkAuth } from '@/lib/auth';
 
 export async function POST(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -15,15 +15,22 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { billId } = body;
+    const { billId, generatorId } = body;
 
     if (!billId) {
       return NextResponse.json({ error: 'معرّف الفاتورة مطلوب' }, { status: 400 });
     }
 
+    const whereClause: any = { id: billId };
+    if (user.role !== 'SUPER_ADMIN') {
+      whereClause.generatorId = user.generatorId;
+    } else if (generatorId) {
+      whereClause.generatorId = generatorId;
+    }
+
     // Fetch the bill
     const bill = await prisma.monthlyBill.findFirst({
-      where: { id: billId, generatorId: user.generatorId },
+      where: whereClause,
       include: { payments: true }
     });
 

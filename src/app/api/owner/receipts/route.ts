@@ -4,7 +4,7 @@ import { checkAuth } from '@/lib/auth';
 
 export async function GET(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -16,8 +16,13 @@ export async function GET(request: Request) {
   }
 
   try {
+    const whereClause: any = { id: paymentId };
+    if (user.role !== 'SUPER_ADMIN') {
+      whereClause.generatorId = user.generatorId;
+    }
+
     const payment = await prisma.payment.findFirst({
-      where: { id: paymentId, generatorId: user.generatorId },
+      where: whereClause,
       include: {
         subscriber: {
           select: { name: true, phone: true, address: true, amps: true }

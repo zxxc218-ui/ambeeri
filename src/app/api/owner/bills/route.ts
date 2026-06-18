@@ -4,11 +4,12 @@ import { checkAuth } from '@/lib/auth';
 
 export async function GET(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
+  const generatorId = searchParams.get('generatorId');
   const subscriberId = searchParams.get('subscriberId');
   const month = searchParams.get('month');
   const year = searchParams.get('year');
@@ -16,11 +17,17 @@ export async function GET(request: Request) {
   const status = searchParams.get('status'); // all, PAID, UNPAID, PARTIAL, LATE
 
   try {
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = (generatorId && generatorId !== 'all') ? generatorId : null;
+    }
+
     const restrictedBoardId = user.boardId && user.boardId !== 'all' ? user.boardId : null;
 
-    const whereClause: any = {
-      generatorId: user.generatorId,
-    };
+    const whereClause: any = {};
+    if (targetGenId) {
+      whereClause.generatorId = targetGenId;
+    }
 
     if (restrictedBoardId) {
       whereClause.boardId = restrictedBoardId;
@@ -71,11 +78,10 @@ export async function GET(request: Request) {
       const currentMonth = new Date().getMonth() + 1;
       const currentDay = new Date().getDate();
 
-      const generator = await prisma.generator.findUnique({
-        where: { id: user.generatorId },
-        select: { paymentDueDay: true }
+      const generators = await prisma.generator.findMany({
+        select: { id: true, paymentDueDay: true }
       });
-      const dueDay = generator?.paymentDueDay || 10;
+      const dueDaysMap = new Map(generators.map(g => [g.id, g.paymentDueDay]));
 
       filteredBills = bills.filter(b => {
         if (b.paymentStatus === 'PAID') return false;
@@ -83,6 +89,8 @@ export async function GET(request: Request) {
 
         const billYr = parseInt(b.year);
         const billMth = parseInt(b.month);
+
+        const dueDay = dueDaysMap.get(b.generatorId) || 10;
 
         if (billYr < currentYear) return true;
         if (billYr === currentYear && billMth < currentMonth) return true;
@@ -101,7 +109,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -112,7 +120,16 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { month, year, boardId, ampPrice } = body;
+    const { month, year, boardId, ampPrice, generatorId } = body;
+
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = generatorId;
+    }
+
+    if (!targetGenId) {
+      return NextResponse.json({ error: 'معرّف المولدة مطلوب' }, { status: 400 });
+    }
 
     if (!month || !year) {
       return NextResponse.json({ error: 'الشهر والسنة مطلوبان' }, { status: 400 });
@@ -124,7 +141,7 @@ export async function POST(request: Request) {
     // Fetch active subscribers
     const subscribers = await prisma.subscriber.findMany({
       where: {
-        generatorId: user.generatorId,
+        generatorId: targetGenId,
         status: 'ACTIVE',
         boardId: targetBoardId ? targetBoardId : undefined
       }
@@ -141,7 +158,7 @@ export async function POST(request: Request) {
       // Get current count of bills for this generator, month, and year to start sequence
       const existingCount = await tx.monthlyBill.count({
         where: {
-          generatorId: user.generatorId,
+          generatorId: targetGenId,
           month,
           year
         }
@@ -187,7 +204,7 @@ export async function POST(request: Request) {
         await tx.monthlyBill.create({
           data: {
             invoiceNumber: invoiceNum,
-            generatorId: user.generatorId,
+            generatorId: targetGenId,
             boardId: sub.boardId,
             subscriberId: sub.id,
             month,
@@ -218,7 +235,7 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -229,14 +246,21 @@ export async function PUT(request: Request) {
 
   try {
     const body = await request.json();
-    const { billId, amps, ampPrice, oldDebt, paidAmount, paymentStatus } = body;
+    const { billId, amps, ampPrice, oldDebt, paidAmount, paymentStatus, generatorId } = body;
 
     if (!billId) {
       return NextResponse.json({ error: 'معرّف الفاتورة مطلوب' }, { status: 400 });
     }
 
+    const whereClause: any = { id: billId };
+    if (user.role !== 'SUPER_ADMIN') {
+      whereClause.generatorId = user.generatorId;
+    } else if (generatorId) {
+      whereClause.generatorId = generatorId;
+    }
+
     const bill = await prisma.monthlyBill.findFirst({
-      where: { id: billId, generatorId: user.generatorId }
+      where: whereClause
     });
 
     if (!bill) {

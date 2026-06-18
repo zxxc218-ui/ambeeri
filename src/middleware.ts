@@ -34,7 +34,7 @@ export async function middleware(request: NextRequest) {
     }
 
     if (pathname.startsWith('/api/owner')) {
-      if (payload.role !== 'OWNER' && payload.role !== 'EMPLOYEE') {
+      if (payload.role !== 'OWNER' && payload.role !== 'EMPLOYEE' && payload.role !== 'SUPER_ADMIN') {
         return NextResponse.json({ error: 'صلاحيات غير كافية لمالك أو موظف' }, { status: 403 });
       }
     }

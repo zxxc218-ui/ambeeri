@@ -2,15 +2,28 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { checkAuth } from '@/lib/auth';
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
+  const { searchParams } = new URL(request.url);
+  const generatorId = searchParams.get('generatorId');
+
   try {
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = (generatorId && generatorId !== 'all') ? generatorId : null;
+    }
+
+    const whereClause: any = {};
+    if (targetGenId) {
+      whereClause.generatorId = targetGenId;
+    }
+
     const expenses = await prisma.expense.findMany({
-      where: { generatorId: user.generatorId },
+      where: whereClause,
       orderBy: { date: 'desc' }
     });
     return NextResponse.json({ expenses });
@@ -22,7 +35,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -32,7 +45,16 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { type, amount, date, note } = body;
+    const { type, amount, date, note, generatorId } = body;
+
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = generatorId;
+    }
+
+    if (!targetGenId) {
+      return NextResponse.json({ error: 'معرّف المولدة مطلوب' }, { status: 400 });
+    }
 
     if (!type || amount === undefined || !date) {
       return NextResponse.json({ error: 'جميع الحقول الأساسية مطلوبة' }, { status: 400 });
@@ -40,7 +62,7 @@ export async function POST(request: Request) {
 
     const expense = await prisma.expense.create({
       data: {
-        generatorId: user.generatorId,
+        generatorId: targetGenId,
         type,
         amount: parseInt(amount) || 0,
         date: new Date(date),
@@ -57,7 +79,7 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -67,15 +89,22 @@ export async function PUT(request: Request) {
 
   try {
     const body = await request.json();
-    const { id, type, amount, date, note } = body;
+    const { id, type, amount, date, note, generatorId } = body;
 
     if (!id || !type || amount === undefined || !date) {
       return NextResponse.json({ error: 'جميع الحقول الأساسية مطلوبة' }, { status: 400 });
     }
 
     // Verify ownership
+    const whereClause: any = { id };
+    if (user.role !== 'SUPER_ADMIN') {
+      whereClause.generatorId = user.generatorId;
+    } else if (generatorId) {
+      whereClause.generatorId = generatorId;
+    }
+
     const existing = await prisma.expense.findFirst({
-      where: { id, generatorId: user.generatorId }
+      where: whereClause
     });
     if (!existing) {
       return NextResponse.json({ error: 'المصروف غير موجود أو لا تملك صلاحية تعديله' }, { status: 404 });
@@ -100,7 +129,7 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -111,13 +140,21 @@ export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
+    const generatorId = searchParams.get('generatorId');
     if (!id) {
       return NextResponse.json({ error: 'معرّف المصروف مطلوب' }, { status: 400 });
     }
 
     // Verify ownership
+    const whereClause: any = { id };
+    if (user.role !== 'SUPER_ADMIN') {
+      whereClause.generatorId = user.generatorId;
+    } else if (generatorId) {
+      whereClause.generatorId = generatorId;
+    }
+
     const existing = await prisma.expense.findFirst({
-      where: { id, generatorId: user.generatorId }
+      where: whereClause
     });
 
     if (!existing) {

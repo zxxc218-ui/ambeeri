@@ -745,6 +745,39 @@ export default function DashboardPage() {
     }
   };
 
+  const handleSubscriberReminder = (sub: any) => {
+    const phone = sub.phone || '';
+    const formatted = formatIraqiPhoneNumber(phone);
+    if (!formatted) {
+      alert('رقم هاتف المشترك غير صحيح، يرجى تعديله من صفحة المشتركين');
+      return;
+    }
+
+    const name = sub.name || '';
+    const genName = user.genName || generatorInfo?.name || 'أمبيري';
+    
+    // Calculate total unpaid bills and old debt
+    const unpaidBills = sub.monthlyBills ? sub.monthlyBills.filter((b: any) => b.paymentStatus !== 'PAID' && b.paymentStatus !== 'CANCELLED') : [];
+    const activeDebt = unpaidBills.reduce((sum: number, b: any) => sum + b.remainingAmount, 0) + sub.oldDebt;
+    
+    let monthStr = '';
+    if (unpaidBills.length > 0) {
+      monthStr = unpaidBills.map((b: any) => `${b.month} / ${b.year}`).join('، ');
+    } else {
+      monthStr = 'ديون سابقة';
+    }
+
+    const amountStr = activeDebt.toLocaleString('ar-IQ');
+
+    const msg = `مرحباً ${name}، نود تذكيركم بوجود مبلغ اشتراك مولدة غير مسدد.
+المولدة: ${genName}
+الشهر: ${monthStr}
+المبلغ المطلوب: ${amountStr} د.ع
+يرجى التسديد، مع الشكر.`;
+
+    window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
+  };
+
   const handleCancelBill = async (billId: string) => {
     if (!confirm('هل أنت متأكد من رغبتك في إلغاء هذه الفاتورة؟ لا يمكن التراجع عن هذا الإجراء.')) {
       return;
@@ -995,45 +1028,11 @@ export default function DashboardPage() {
     
     const formattedPhone = formatIraqiPhoneNumber(paymentData.whatsappPhone || paymentData.phone || '');
     if (!formattedPhone) {
-      alert('رقم الهاتف غير صحيح، يرجى تعديل رقم المشترك');
+      alert('رقم هاتف المشترك غير صحيح، يرجى تعديله من صفحة المشتركين');
       return;
     }
 
     const receiptUrl = `${window.location.origin}/api/receipts/${paymentData.paymentId}/pdf`;
-    
-    try {
-      const element = document.getElementById('receipt-pdf-template');
-      if (element && navigator.canShare) {
-        const canvas = await html2canvas(element, {
-          scale: 3,
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#ffffff'
-        });
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF({
-          orientation: 'portrait',
-          unit: 'px',
-          format: [canvas.width / 3, canvas.height / 3]
-        });
-        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width / 3, canvas.height / 3);
-        const pdfBlob = pdf.output('blob');
-        const filename = `receipt-${paymentData.invoiceNumber || paymentData.receiptNumber || 'print'}.pdf`;
-        const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
-
-        if (navigator.canShare({ files: [pdfFile] })) {
-          await navigator.share({
-            files: [pdfFile],
-            title: `وصل تسديد - ${paymentData.subscriberName}`,
-            text: `وصل تسديد مشترك من مولدة ${paymentData.generatorName || generatorInfo?.name || ''}`
-          });
-          return;
-        }
-      }
-    } catch (shareErr) {
-      console.warn('Web Share failed, falling back to message template:', shareErr);
-    }
-
     const generatorName = paymentData.generatorName || generatorInfo?.name || 'أمبيري';
     const subscriberName = paymentData.subscriberName;
     const monthStr = `${paymentData.month} / ${paymentData.year}`;
@@ -1041,13 +1040,13 @@ export default function DashboardPage() {
     const remainingAmount = (paymentData.remainingAmount || 0).toLocaleString('ar-IQ');
     const receiptNumber = paymentData.receiptNumber || '—';
 
-    const message = `مرحباً، تم تسديد اشتراك مولدة [${generatorName}].
-المشترك: [${subscriberName}]
-الشهر: [${monthStr}]
-المبلغ المسدد: [${amountPaid}] د.ع
-المتبقي: [${remainingAmount}] د.ع
-رقم الوصل: [${receiptNumber}]
-رابط الوصل: [${receiptUrl}]`;
+    const message = `مرحباً، تم تسديد اشتراك مولدة ${generatorName}
+المشترك: ${subscriberName}
+الشهر: ${monthStr}
+المبلغ المسدد: ${amountPaid} د.ع
+المتبقي: ${remainingAmount} د.ع
+رقم الوصل: ${receiptNumber}
+رابط الوصل: ${receiptUrl}`;
 
     const encodedMsg = encodeURIComponent(message);
     window.open(`https://wa.me/${formattedPhone}?text=${encodedMsg}`, '_blank', 'noopener,noreferrer');
@@ -1679,7 +1678,7 @@ export default function DashboardPage() {
                             onClick={() => {
                               const formatted = formatIraqiPhoneNumber(s.phone);
                               if (!formatted) {
-                                alert('رقم الهاتف غير صحيح، يرجى إدخاله بصيغة عراقية صحيحة');
+                                alert('رقم هاتف المشترك غير صحيح، يرجى تعديله من صفحة المشتركين');
                                 return;
                               }
                               window.open(`https://wa.me/${formatted}`, '_blank', 'noopener,noreferrer');
@@ -1690,6 +1689,27 @@ export default function DashboardPage() {
                           >
                             <WhatsAppIcon size={20} className="text-success" />
                           </button>
+                          {activeDebt > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleSubscriberReminder(s)}
+                              className="btn btn-whatsapp btn-sm"
+                              style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '4px', 
+                                background: '#25d366', 
+                                color: '#fff', 
+                                border: 'none', 
+                                cursor: 'pointer',
+                                padding: '4px 8px',
+                                borderRadius: '6px',
+                                fontSize: '.75rem'
+                              }}
+                            >
+                              تذكير واتساب <WhatsAppIcon size={14} />
+                            </button>
+                          )}
                           {(user.role === 'OWNER' || (user.permissions && user.permissions['edit_subscriber'])) && (
                             <button className="action-btn btn-edit" title="تعديل" onClick={() => {
                               setSelectedSub(s);
@@ -1831,44 +1851,42 @@ export default function DashboardPage() {
                       {/* Actions available only if remainingAmount > 0 */}
                       {b.remainingAmount > 0 && (user.role === 'OWNER' || (user.permissions && user.permissions['collect_payment'])) && (
                         <>
-                          {(b.reminderStatus === 'FAILED' || b.reminderStatus === 'PENDING' || b.reminderStatus === 'NOT_SENT') && (
-                            <button 
-                              type="button" 
-                              className="btn btn-secondary btn-sm" 
-                              style={{ 
-                                borderColor: b.reminderStatus === 'FAILED' ? 'var(--danger)' : (b.reminderStatus === 'PENDING' ? 'var(--warning)' : 'var(--border-dark)'), 
-                                color: b.reminderStatus === 'FAILED' ? 'var(--danger)' : (b.reminderStatus === 'PENDING' ? 'var(--warning)' : 'var(--text-muted)'),
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px'
-                              }}
-                              onClick={() => handleSendReminder(b.id)}
-                            >
-                              تذكير واتساب <WhatsAppIcon size={14} />
-                            </button>
-                          )}
-                          {(() => {
-                            const text = b.paymentStatus === 'UNPAID'
-                              ? `عزيزي المشترك، نود تذكيرك بأن فاتورة اشتراك المولدة لشهر ${b.month} / ${b.year} لم يتم تسديدها لحد الآن. يرجى التسديد بأقرب وقت، مع الشكر.`
-                              : `عزيزي المشترك، نود تذكيرك بأن فاتورة اشتراك المولدة لشهر ${b.month} / ${b.year} غير مسددة بالكامل لحد الآن. يرجى إكمال التسديد، مع الشكر.`;
-                            return (b.reminderStatus === 'FAILED' || b.reminderStatus === 'PENDING') && (
-                              <button 
-                                type="button"
-                                onClick={() => {
-                                  const formatted = formatIraqiPhoneNumber(b.subscriber?.phone || '');
-                                  if (!formatted) {
-                                    alert('رقم الهاتف غير صحيح، يرجى إدخاله بصيغة عراقية صحيحة');
-                                    return;
-                                  }
-                                  window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
-                                }}
-                                className="btn btn-whatsapp btn-sm"
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer' }}
-                              >
-                                إرسال واتساب يدوياً <WhatsAppIcon size={14} />
-                              </button>
-                            );
-                          })()}
+                          <button 
+                            type="button" 
+                            className="btn btn-whatsapp btn-sm" 
+                            style={{ 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '6px', 
+                              background: '#25d366', 
+                              color: '#fff', 
+                              border: 'none', 
+                              cursor: 'pointer' 
+                            }}
+                            onClick={() => {
+                              const phone = b.subscriber?.phone || '';
+                              const formatted = formatIraqiPhoneNumber(phone);
+                              if (!formatted) {
+                                alert('رقم هاتف المشترك غير صحيح، يرجى تعديله من صفحة المشتركين');
+                                return;
+                              }
+                              
+                              const name = b.subscriber?.name || '';
+                              const genName = user.genName || generatorInfo?.name || 'أمبيري';
+                              const monthStr = `${b.month} / ${b.year}`;
+                              const amountStr = (b.remainingAmount || 0).toLocaleString('ar-IQ');
+                              
+                              const msg = `مرحباً ${name}، نود تذكيركم بوجود مبلغ اشتراك مولدة غير مسدد.
+المولدة: ${genName}
+الشهر: ${monthStr}
+المبلغ المطلوب: ${amountStr} د.ع
+يرجى التسديد، مع الشكر.`;
+                              
+                              window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
+                            }}
+                          >
+                            تذكير واتساب <WhatsAppIcon size={14} />
+                          </button>
                           {b.paymentStatus !== 'PAID' && b.paymentStatus !== 'CANCELLED' && user && (user.role === 'OWNER' || (user.permissions && user.permissions['cancel_bill'])) && (
                             <button
                               type="button"

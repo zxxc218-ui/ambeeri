@@ -4,20 +4,27 @@ import { checkAuth } from '@/lib/auth';
 
 export async function GET(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
+  const generatorId = searchParams.get('generatorId');
   const boardId = searchParams.get('boardId');
 
   try {
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = (generatorId && generatorId !== 'all') ? generatorId : null;
+    }
+
     const restrictedBoardId = user.boardId && user.boardId !== 'all' ? user.boardId : null;
 
     // Build filter
-    const whereClause: any = {
-      generatorId: user.generatorId,
-    };
+    const whereClause: any = {};
+    if (targetGenId) {
+      whereClause.generatorId = targetGenId;
+    }
 
     if (restrictedBoardId) {
       whereClause.boardId = restrictedBoardId;
@@ -56,7 +63,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -67,7 +74,16 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { name, phone, address, amps, ampPrice, oldDebt, boardId } = body;
+    const { name, phone, address, amps, ampPrice, oldDebt, boardId, generatorId } = body;
+
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = generatorId;
+    }
+
+    if (!targetGenId) {
+      return NextResponse.json({ error: 'معرّف المولدة مطلوب' }, { status: 400 });
+    }
 
     if (!name || !phone || !address || amps === undefined || ampPrice === undefined || !boardId) {
       return NextResponse.json({ error: 'جميع الحقول المطلوبة يجب إدخالها' }, { status: 400 });
@@ -80,7 +96,7 @@ export async function POST(request: Request) {
 
     const subscriber = await prisma.subscriber.create({
       data: {
-        generatorId: user.generatorId,
+        generatorId: targetGenId,
         boardId,
         name,
         phone,
@@ -101,7 +117,7 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -112,15 +128,22 @@ export async function PUT(request: Request) {
 
   try {
     const body = await request.json();
-    const { id, name, phone, address, amps, ampPrice, oldDebt, boardId, status } = body;
+    const { id, name, phone, address, amps, ampPrice, oldDebt, boardId, status, generatorId } = body;
 
     if (!id || !name || !phone || !address || amps === undefined || ampPrice === undefined || !boardId) {
       return NextResponse.json({ error: 'جميع الحقول المطلوبة يجب إدخالها' }, { status: 400 });
     }
 
-    // Verify ownership and employee board restriction
+    // Verify ownership
+    const whereClause: any = { id };
+    if (user.role !== 'SUPER_ADMIN') {
+      whereClause.generatorId = user.generatorId;
+    } else if (generatorId) {
+      whereClause.generatorId = generatorId;
+    }
+
     const existing = await prisma.subscriber.findFirst({
-      where: { id, generatorId: user.generatorId }
+      where: whereClause
     });
     if (!existing) {
       return NextResponse.json({ error: 'المشترك غير موجود أو لا تملك صلاحية تعديله' }, { status: 404 });
@@ -155,7 +178,7 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   const user = await checkAuth();
-  if (!user || !user.generatorId) {
+  if (!user || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
@@ -167,13 +190,21 @@ export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
+    const generatorId = searchParams.get('generatorId');
     if (!id) {
       return NextResponse.json({ error: 'معرّف المشترك مطلوب' }, { status: 400 });
     }
 
     // Verify ownership
+    const whereClause: any = { id };
+    if (user.role !== 'SUPER_ADMIN') {
+      whereClause.generatorId = user.generatorId;
+    } else if (generatorId) {
+      whereClause.generatorId = generatorId;
+    }
+
     const existing = await prisma.subscriber.findFirst({
-      where: { id, generatorId: user.generatorId }
+      where: whereClause
     });
 
     if (!existing) {

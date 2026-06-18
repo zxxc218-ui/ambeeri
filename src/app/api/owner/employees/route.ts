@@ -3,18 +3,28 @@ import bcrypt from 'bcryptjs';
 import prisma from '@/lib/db';
 import { checkAuth } from '@/lib/auth';
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await checkAuth();
-  if (!user || user.role !== 'OWNER' || !user.generatorId) {
+  if (!user || (user.role !== 'OWNER' && user.role !== 'SUPER_ADMIN') || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
+  const { searchParams } = new URL(request.url);
+  const generatorId = searchParams.get('generatorId');
+
   try {
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = (generatorId && generatorId !== 'all') ? generatorId : null;
+    }
+
+    const whereClause: any = { role: 'EMPLOYEE' };
+    if (targetGenId) {
+      whereClause.generatorId = targetGenId;
+    }
+
     const employees = await prisma.user.findMany({
-      where: {
-        generatorId: user.generatorId,
-        role: 'EMPLOYEE'
-      },
+      where: whereClause,
       include: {
         board: {
           select: { id: true, name: true }
@@ -32,13 +42,22 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const user = await checkAuth();
-  if (!user || user.role !== 'OWNER' || !user.generatorId) {
+  if (!user || (user.role !== 'OWNER' && user.role !== 'SUPER_ADMIN') || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
   try {
     const body = await request.json();
-    const { name, username, password, boardId, permissions } = body;
+    const { name, username, password, boardId, permissions, generatorId } = body;
+
+    let targetGenId = user.generatorId;
+    if (user.role === 'SUPER_ADMIN') {
+      targetGenId = generatorId;
+    }
+
+    if (!targetGenId) {
+      return NextResponse.json({ error: 'معرّف المولدة مطلوب' }, { status: 400 });
+    }
 
     if (!name || !username || !password) {
       return NextResponse.json({ error: 'الاسم واسم المستخدم وكلمة المرور مطلوبة' }, { status: 400 });
@@ -57,7 +76,7 @@ export async function POST(request: Request) {
     const employee = await prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
-          generatorId: user.generatorId,
+          generatorId: targetGenId,
           boardId: boardId && boardId !== 'all' ? boardId : null,
           name,
           username,
@@ -93,21 +112,28 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   const user = await checkAuth();
-  if (!user || user.role !== 'OWNER' || !user.generatorId) {
+  if (!user || (user.role !== 'OWNER' && user.role !== 'SUPER_ADMIN') || (!user.generatorId && user.role !== 'SUPER_ADMIN')) {
     return NextResponse.json({ error: 'غير مصرح للوصول' }, { status: 401 });
   }
 
   try {
     const body = await request.json();
-    const { id, name, username, password, boardId, permissions, status } = body;
+    const { id, name, username, password, boardId, permissions, status, generatorId } = body;
 
     if (!id || !name || !username) {
       return NextResponse.json({ error: 'الاسم واسم المستخدم مطلوبان' }, { status: 400 });
     }
 
     // Verify ownership
+    const whereClause: any = { id, role: 'EMPLOYEE' };
+    if (user.role !== 'SUPER_ADMIN') {
+      whereClause.generatorId = user.generatorId;
+    } else if (generatorId) {
+      whereClause.generatorId = generatorId;
+    }
+
     const existing = await prisma.user.findFirst({
-      where: { id, generatorId: user.generatorId, role: 'EMPLOYEE' }
+      where: whereClause
     });
     if (!existing) {
       return NextResponse.json({ error: 'الموظف غير موجود أو لا تملك صلاحية تعديله' }, { status: 404 });
