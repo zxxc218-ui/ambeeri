@@ -11,6 +11,25 @@ const WhatsAppIcon = ({ size = 20, className = "" }) => (
   </svg>
 );
 
+function formatIraqiPhoneNumber(phone: string): string | null {
+  if (!phone) return null;
+  let cleaned = phone.trim().replace(/[\s\-()]/g, '');
+  if (cleaned.startsWith('+964')) {
+    cleaned = '964' + cleaned.slice(4);
+  } else if (cleaned.startsWith('00964')) {
+    cleaned = '964' + cleaned.slice(5);
+  } else if (cleaned.startsWith('0')) {
+    cleaned = '964' + cleaned.slice(1);
+  } else if (!cleaned.startsWith('964') && cleaned.replace(/\D/g, '').length === 10) {
+    cleaned = '964' + cleaned.replace(/\D/g, '');
+  }
+  cleaned = cleaned.replace(/\D/g, '');
+  if (/^964\d{10}$/.test(cleaned)) {
+    return cleaned;
+  }
+  return null;
+}
+
 export default function SubscriberDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -175,18 +194,16 @@ export default function SubscriberDetailPage() {
         alert(data.error || 'فشل إرسال التذكير');
       } else {
         if (data.warning && data.whatsappMessage && data.whatsappPhone) {
-          const cleanPhone = data.whatsappPhone.replace(/\D/g, '');
-          let normalizedPhone = cleanPhone;
-          if (cleanPhone.startsWith('0')) {
-            normalizedPhone = '964' + cleanPhone.substring(1);
-          } else if (!cleanPhone.startsWith('964') && cleanPhone.length === 10) {
-            normalizedPhone = '964' + cleanPhone;
+          const formatted = formatIraqiPhoneNumber(data.whatsappPhone);
+          if (!formatted) {
+            alert('رقم الهاتف غير صحيح، يرجى إدخاله بصيغة عراقية صحيحة');
+          } else {
+            const waUrl = `https://wa.me/${formatted}?text=${encodeURIComponent(data.whatsappMessage)}`;
+            setWhatsappWarning({
+              message: data.warning,
+              url: waUrl
+            });
           }
-          const waUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(data.whatsappMessage)}`;
-          setWhatsappWarning({
-            message: data.warning,
-            url: waUrl
-          });
         } else {
           alert('تم إرسال تذكير الواتساب بنجاح');
         }
@@ -278,15 +295,21 @@ export default function SubscriberDetailPage() {
 
         {/* Action Button: WhatsApp */}
         <div style={{ marginBottom: '20px' }}>
-          <a
-            href={`https://wa.me/${subscriber.phone.replace(/[^0-9]/g, '')}`}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={() => {
+              const formatted = formatIraqiPhoneNumber(subscriber.phone || '');
+              if (!formatted) {
+                alert('رقم الهاتف غير صحيح، يرجى إدخاله بصيغة عراقية صحيحة');
+                return;
+              }
+              window.open(`https://wa.me/${formatted}`, '_blank', 'noopener,noreferrer');
+            }}
             className="btn btn-whatsapp btn-block"
-            style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', background: '#25d366', color: '#fff', textDecoration: 'none' }}
+            style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer', width: '100%', padding: '10px 0', borderRadius: '8px' }}
           >
             تواصل عبر واتساب <WhatsAppIcon size={20} />
-          </a>
+          </button>
         </div>
 
         {/* Billing History Section */}
@@ -407,25 +430,23 @@ export default function SubscriberDetailPage() {
                       const text = b.paymentStatus === 'UNPAID'
                         ? `عزيزي المشترك، نود تذكيرك بأن فاتورة اشتراك المولدة لشهر ${b.month} / ${b.year} لم يتم تسديدها لحد الآن. يرجى التسديد بأقرب وقت، مع الشكر.`
                         : `عزيزي المشترك، نود تذكيرك بأن فاتورة اشتراك المولدة لشهر ${b.month} / ${b.year} غير مسددة بالكامل لحد الآن. يرجى إكمال التسديد، مع الشكر.`;
-                      const cleanPhone = subscriber.phone ? subscriber.phone.replace(/\D/g, '') : '';
-                      let normalizedPhone = cleanPhone;
-                      if (cleanPhone.startsWith('0')) {
-                        normalizedPhone = '964' + cleanPhone.substring(1);
-                      } else if (!cleanPhone.startsWith('964') && cleanPhone.length === 10) {
-                        normalizedPhone = '964' + cleanPhone;
-                      }
-                      const waUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(text)}`;
                       
                       return (b.reminderStatus === 'FAILED' || b.reminderStatus === 'PENDING') && (
-                        <a 
-                          href={waUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            const formatted = formatIraqiPhoneNumber(subscriber.phone || '');
+                            if (!formatted) {
+                              alert('رقم الهاتف غير صحيح، يرجى إدخاله بصيغة عراقية صحيحة');
+                              return;
+                            }
+                            window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+                          }}
                           className="btn btn-whatsapp btn-sm"
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', background: '#25d366', color: '#fff', border: 'none' }}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer' }}
                         >
                           إرسال واتساب يدوياً <WhatsAppIcon size={14} />
-                        </a>
+                        </button>
                       );
                     })()}
                     <button className="btn btn-primary btn-sm" onClick={() => {
@@ -605,15 +626,21 @@ export default function SubscriberDetailPage() {
                 </button>
                 
                 {paymentSuccessData.whatsappMessage && (
-                  <a
-                    href={`https://wa.me/${paymentSuccessData.whatsappPhone ? (paymentSuccessData.whatsappPhone.startsWith('0') ? '964' + paymentSuccessData.whatsappPhone.substring(1) : paymentSuccessData.whatsappPhone) : ''}?text=${encodeURIComponent(paymentSuccessData.whatsappMessage)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const formatted = formatIraqiPhoneNumber(paymentSuccessData.whatsappPhone || '');
+                      if (!formatted) {
+                        alert('رقم الهاتف غير صحيح، يرجى إدخاله بصيغة عراقية صحيحة');
+                        return;
+                      }
+                      window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(paymentSuccessData.whatsappMessage)}`, '_blank', 'noopener,noreferrer');
+                    }}
                     className="btn btn-whatsapp"
-                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: '#25d366', color: '#fff', textDecoration: 'none' }}
+                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer' }}
                   >
                     <WhatsAppIcon size={16} /> واتساب يدوياً
-                  </a>
+                  </button>
                 )}
               </div>
               
