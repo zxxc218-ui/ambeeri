@@ -778,6 +778,51 @@ export default function DashboardPage() {
     window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
   };
 
+  const handleWhatsappReceiptShare = async (paymentId: string) => {
+    try {
+      const res = await fetch(`/api/owner/receipts?paymentId=${paymentId}&format=json`);
+      if (!res.ok) {
+        const errData = await res.json();
+        alert(errData.error || 'حدث خطأ أثناء تحميل بيانات الوصل');
+        return;
+      }
+      const data = await res.json();
+      const p = data.payment;
+      if (!p) {
+        alert('بيانات الوصل غير متوفرة');
+        return;
+      }
+
+      const formattedPhone = formatIraqiPhoneNumber(p.subscriber?.phone || '');
+      if (!formattedPhone) {
+        alert('رقم هاتف المشترك غير صحيح، يرجى تعديله من صفحة المشتركين');
+        return;
+      }
+
+      const receiptUrl = `https://ambeeri.vercel.app/api/receipts/${p.id}/pdf`;
+      const generatorName = p.generator?.name || generatorInfo?.name || 'أمبيري';
+      const subscriberName = p.subscriber?.name || '';
+      const monthStr = `${p.bill?.month || ''} / ${p.bill?.year || ''}`;
+      const amountPaid = (p.amount || 0).toLocaleString('ar-IQ');
+      const remainingAmount = (p.bill?.remainingAmount || 0).toLocaleString('ar-IQ');
+      const receiptNumber = p.receiptNumber || '—';
+
+      const message = `مرحباً، تم تسديد اشتراك مولدة ${generatorName}
+المشترك: ${subscriberName}
+الشهر: ${monthStr}
+المبلغ المسدد: ${amountPaid} د.ع
+المتبقي: ${remainingAmount} د.ع
+رقم الوصل: ${receiptNumber}
+رابط الوصل: ${receiptUrl}`;
+
+      const encodedMsg = encodeURIComponent(message);
+      window.open(`https://wa.me/${formattedPhone}?text=${encodedMsg}`, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      console.error(err);
+      alert('فشل الاتصال بالسيرفر لإرسال الوصل');
+    }
+  };
+
   const handleCancelBill = async (billId: string) => {
     if (!confirm('هل أنت متأكد من رغبتك في إلغاء هذه الفاتورة؟ لا يمكن التراجع عن هذا الإجراء.')) {
       return;
@@ -1032,7 +1077,7 @@ export default function DashboardPage() {
       return;
     }
 
-    const receiptUrl = `${window.location.origin}/api/receipts/${paymentData.paymentId}/pdf`;
+    const receiptUrl = `https://ambeeri.vercel.app/api/receipts/${paymentData.paymentId}/pdf`;
     const generatorName = paymentData.generatorName || generatorInfo?.name || 'أمبيري';
     const subscriberName = paymentData.subscriberName;
     const monthStr = `${paymentData.month} / ${paymentData.year}`;
@@ -1837,14 +1882,20 @@ export default function DashboardPage() {
                       )}
 
                       {/* Reprint receipt (if payment exists) */}
-                      {b.payments && b.payments.length > 0 && (user.role === 'OWNER' || (user.permissions && user.permissions.reprint_receipt)) && (
+                      {(user.role === 'OWNER' || (user.permissions && user.permissions.reprint_receipt)) && (
                         <button
                           type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openReceipt(b.payments[b.payments.length - 1].id)}
-                          style={{ borderColor: 'var(--primary)', color: 'var(--primary)', background: 'transparent', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                          className="btn btn-whatsapp btn-sm"
+                          onClick={() => {
+                            if (b.payments && b.payments.length > 0) {
+                              handleWhatsappReceiptShare(b.payments[b.payments.length - 1].id);
+                            } else {
+                              alert("لا يوجد وصل لهذه الفاتورة لأنها غير مسددة");
+                            }
+                          }}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer' }}
                         >
-                          <Printer size={14} /> وصل
+                          <WhatsAppIcon size={14} /> وصل
                         </button>
                       )}
 
@@ -3072,8 +3123,6 @@ export default function DashboardPage() {
                       <div>العنوان: <strong>{activeReceipt.generatorArea || generatorInfo?.area}</strong></div>
                     )}
                   </div>
-
-                  <h1 style={{ margin: '14px 0 0 0', color: '#10b981', fontSize: '26px', fontWeight: '800', letterSpacing: '0.5px' }}>وصل تسديد</h1>
                 </div>
 
                 {/* Details */}

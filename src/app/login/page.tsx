@@ -127,6 +127,7 @@ export default function LoginPage() {
       <div className="login-demo-hint">
         نظام الإنتاج الموثق. يرجى استخدام بيانات الدخول المخصصة لك.
       </div>
+      <div style={{ textAlign: 'center', fontSize: '0.75rem', color: '#94a3b8', marginTop: '16px' }}>VERSION TEST 2026-06-18</div>
     </div>
   );
 }

@@ -293,7 +293,6 @@ export async function GET(
       <div>رقم الهاتف: <strong>${payment.generator?.phone || '—'}</strong></div>
       <div>العنوان: <strong>${payment.generator?.area || '—'}</strong></div>
     </div>
-    <div class="receipt-title">وصل تسديد</div>
   </div>
 
   <div class="section-title">👤 بيانات المشترك</div>

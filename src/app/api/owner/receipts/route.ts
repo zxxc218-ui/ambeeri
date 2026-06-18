@@ -306,7 +306,7 @@ export async function GET(request: Request) {
         <div><span class="label">رقم الهاتف:</span> ${payment.generator?.phone || ''}</div>
         <div><span class="label">العنوان:</span> ${payment.generator?.area || ''}</div>
       </div>
-      <div class="receipt-title">وصل تسديد</div>
+
       <span class="receipt-badge">✓ وصل رسمي</span>
     </div>
 
@@ -434,47 +434,52 @@ export async function GET(request: Request) {
     });
   }
 
+  function formatIraqiPhoneNumber(phone) {
+    if (!phone) return null;
+    let cleaned = phone.trim().replace(/[\s\-()]/g, '');
+    if (cleaned.startsWith('+964')) {
+      cleaned = '964' + cleaned.slice(4);
+    } else if (cleaned.startsWith('00964')) {
+      cleaned = '964' + cleaned.slice(5);
+    } else if (cleaned.startsWith('0')) {
+      cleaned = '964' + cleaned.slice(1);
+    } else if (!cleaned.startsWith('964') && cleaned.replace(/\D/g, '').length === 10) {
+      cleaned = '964' + cleaned.replace(/\D/g, '');
+    }
+    cleaned = cleaned.replace(/\D/g, '');
+    if (/^964\d{10}$/.test(cleaned)) {
+      return cleaned;
+    }
+    return null;
+  }
+
   async function sendWhatsApp() {
-    await loadCairoFont();
-    const element = document.querySelector('.receipt');
-    const btns = document.querySelector('.btn-row');
-    btns.style.display = 'none';
-    showLoading('جاري تجهيز الوصل لإرساله عبر واتساب...');
-    html2pdf().set(getPdfOptions()).from(element).outputPdf('blob').then(async (pdfBlob) => {
-      btns.style.display = 'flex';
-      hideLoading();
+    const rawPhone = '${payment.subscriber?.phone || ''}';
+    const formattedPhone = formatIraqiPhoneNumber(rawPhone);
+    if (!formattedPhone) {
+      alert('رقم هاتف المشترك غير صحيح، يرجى تعديله من صفحة المشتركين');
+      return;
+    }
 
-      const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
+    const generatorName = '${payment.generator?.name || 'أمبيري'}';
+    const subscriberName = '${payment.subscriber?.name || ''}';
+    const monthStr = '${payment.bill?.month} / ${payment.bill?.year}';
+    const amountPaid = '${(payment.amount || 0).toLocaleString('ar-IQ')}';
+    const remainingAmount = '${(payment.bill?.remainingAmount || 0).toLocaleString('ar-IQ')}';
+    const receiptNumber = '${payment.receiptNumber || '—'}';
+    const receiptUrl = 'https://ambeeri.vercel.app/api/receipts/${payment.id}/pdf';
 
-      // Try Web Share API (Android mobile)
-      if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
-        try {
-          await navigator.share({
-            title: 'وصل - ' + subscriberName,
-            text: 'وصل من أمبيري',
-            files: [pdfFile]
-          });
-          return;
-        } catch (err) {
-          if (err.name !== 'AbortError') console.error('Share failed:', err);
-        }
-      }
+    const message = 'مرحباً، تم تسديد اشتراك مولدة ' + generatorName + '\n' +
+      'المشترك: ' + subscriberName + '\n' +
+      'الشهر: ' + monthStr + '\n' +
+      'المبلغ المسدد: ' + amountPaid + ' د.ع\n' +
+      'المتبقي: ' + remainingAmount + ' د.ع\n' +
+      'رقم الوصل: ' + receiptNumber + '\n' +
+      'رابط الوصل: ' + receiptUrl;
 
-      // Fallback to WhatsApp web link
-      let phone = subscriberPhone.replace(/\\D/g, '');
-      if (phone.startsWith('0')) {
-        phone = '964' + phone.substring(1);
-      } else if (!phone.startsWith('964') && phone.length === 10) {
-        phone = '964' + phone;
-      }
-      const msg = encodeURIComponent('مرحباً ' + subscriberName + '، مرفق وصل الخاص بك من أمبيري. شكراً لتسديدكم ✅');
-      const url = phone ? 'https://wa.me/' + phone + '?text=' + msg : 'https://wa.me/?text=' + msg;
-      window.open(url, '_blank');
-    }).catch(() => {
-      btns.style.display = 'flex';
-      hideLoading();
-      alert('حدث خطأ أثناء تجهيز الملف');
-    });
+    const encodedMsg = encodeURIComponent(message);
+    const url = 'https://wa.me/' + formattedPhone + '?text=' + encodedMsg;
+    window.open(url, '_blank');
   }
 
   // Auto trigger PDF download when page loads

@@ -185,7 +185,7 @@ export default function SubscriberDetailPage() {
       return;
     }
 
-    const receiptUrl = `${window.location.origin}/api/receipts/${paymentData.paymentId}/pdf`;
+    const receiptUrl = `https://ambeeri.vercel.app/api/receipts/${paymentData.paymentId}/pdf`;
     const generatorName = paymentData.generatorName || subscriber?.generator?.name || 'أمبيري';
     const subscriberName = paymentData.subscriberName;
     const monthStr = `${paymentData.month} / ${paymentData.year}`;
@@ -203,6 +203,51 @@ export default function SubscriberDetailPage() {
 
     const encodedMsg = encodeURIComponent(message);
     window.open(`https://wa.me/${formattedPhone}?text=${encodedMsg}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleWhatsappReceiptShare = async (paymentId: string) => {
+    try {
+      const res = await fetch(`/api/owner/receipts?paymentId=${paymentId}&format=json`);
+      if (!res.ok) {
+        const errData = await res.json();
+        alert(errData.error || 'حدث خطأ أثناء تحميل بيانات الوصل');
+        return;
+      }
+      const data = await res.json();
+      const p = data.payment;
+      if (!p) {
+        alert('بيانات الوصل غير متوفرة');
+        return;
+      }
+
+      const formattedPhone = formatIraqiPhoneNumber(p.subscriber?.phone || '');
+      if (!formattedPhone) {
+        alert('رقم هاتف المشترك غير صحيح، يرجى تعديله من صفحة المشتركين');
+        return;
+      }
+
+      const receiptUrl = `https://ambeeri.vercel.app/api/receipts/${p.id}/pdf`;
+      const generatorName = p.generator?.name || subscriber?.generator?.name || 'أمبيري';
+      const subscriberName = p.subscriber?.name || '';
+      const monthStr = `${p.bill?.month || ''} / ${p.bill?.year || ''}`;
+      const amountPaid = (p.amount || 0).toLocaleString('ar-IQ');
+      const remainingAmount = (p.bill?.remainingAmount || 0).toLocaleString('ar-IQ');
+      const receiptNumber = p.receiptNumber || '—';
+
+      const message = `مرحباً، تم تسديد اشتراك مولدة ${generatorName}
+المشترك: ${subscriberName}
+الشهر: ${monthStr}
+المبلغ المسدد: ${amountPaid} د.ع
+المتبقي: ${remainingAmount} د.ع
+رقم الوصل: ${receiptNumber}
+رابط الوصل: ${receiptUrl}`;
+
+      const encodedMsg = encodeURIComponent(message);
+      window.open(`https://wa.me/${formattedPhone}?text=${encodedMsg}`, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      console.error(err);
+      alert('فشل الاتصال بالسيرفر لإرسال الوصل');
+    }
   };
 
   const openReceipt = async (paymentId: string) => {
@@ -522,11 +567,11 @@ export default function SubscriberDetailPage() {
                           {(user.role === 'OWNER' || (user.permissions && user.permissions.reprint_receipt)) && (
                             <button
                               type="button"
-                              onClick={() => openReceipt(p.id)}
-                              style={{ background: '#1e3a5f', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '.65rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                              title="طباعة الوصل"
+                              onClick={() => handleWhatsappReceiptShare(p.id)}
+                              style={{ background: '#25d366', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '.65rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              title="إرسال الوصل واتساب"
                             >
-                              <Printer style={{ width: '12px', height: '12px' }} /> وصل
+                              <WhatsAppIcon size={12} /> وصل
                             </button>
                           )}
                         </div>
@@ -682,8 +727,6 @@ export default function SubscriberDetailPage() {
                       <div>العنوان: <strong>{activeReceipt.generatorArea || subscriber?.generator?.area}</strong></div>
                     )}
                   </div>
-
-                  <h1 style={{ margin: '14px 0 0 0', color: '#10b981', fontSize: '26px', fontWeight: '800', letterSpacing: '0.5px' }}>وصل تسديد</h1>
                 </div>
 
                 {/* Details */}
