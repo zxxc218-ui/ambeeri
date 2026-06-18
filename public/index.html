@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>أمبيري</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            text-align: center;
+            user-select: none;
+        }
+        .container {
+            max-width: 400px;
+            padding: 30px;
+            border-radius: 16px;
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        }
+        .icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            color: #ef4444;
+            animation: pulse 2s infinite;
+        }
+        h2 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 24px;
+            color: #f8fafc;
+        }
+        p {
+            color: #94a3b8;
+            margin-bottom: 30px;
+            line-height: 1.6;
+            font-size: 15px;
+        }
+        .btn {
+            background-color: #10b981;
+            color: white;
+            border: none;
+            padding: 12px 36px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2);
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .btn:hover {
+            background-color: #059669;
+            transform: translateY(-1px);
+        }
+        .btn:active {
+            transform: translateY(0);
+        }
+        .loader {
+            border: 4px solid rgba(16, 185, 129, 0.1);
+            border-top: 4px solid #10b981;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+        }
+        .ip-input-group {
+            margin-top: 20px;
+            text-align: right;
+        }
+        .ip-label {
+            display: block;
+            font-size: 13px;
+            color: #94a3b8;
+            margin-bottom: 6px;
+        }
+        .ip-input {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: #1e293b;
+            color: white;
+            font-size: 16px;
+            text-align: center;
+            margin-bottom: 12px;
+            box-sizing: border-box;
+        }
+        .ip-input:focus {
+            outline: none;
+            border-color: #10b981;
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-view" class="container">
+        <div class="loader"></div>
+        <h2>جاري الاتصال بالخادم...</h2>
+        <p>يرجى الانتظار بينما نقوم بالاتصال بنظام "أمبيري".</p>
+    </div>
+
+    <div id="error-view" class="container hidden">
+        <div class="icon">📶</div>
+        <h2>لا يوجد اتصال بالخادم</h2>
+        <p>تعذر الاتصال بنظام "أمبيري". يرجى التأكد من تشغيل السيرفر على الكمبيوتر (npm run dev) وأن الهاتف متصل بنفس شبكة الواي فاي.</p>
+        
+        <div class="ip-input-group">
+            <label class="ip-label" for="ip-address">عنوان IP الخاص بالسيرفر الحالي:</label>
+            <input type="text" id="ip-address" class="ip-input" placeholder="مثال: 192.168.68.63" />
+        </div>
+        
+        <button class="btn" onclick="saveAndRetry()" style="margin-bottom: 10px;">حفظ والاتصال ✓</button>
+        <button class="btn" style="background-color: transparent; border: 1px solid rgba(255,255,255,0.2); color: #94a3b8; box-shadow: none;" onclick="checkConnection()">إعادة المحاولة فقط</button>
+    </div>
+
+    <script>
+        // القيمة الافتراضية لآي بي جهازك المكتبي الحالي
+        const DEFAULT_IP = '192.168.68.63';
+
+        // الحصول على الرابط الحالي المخزن أو استخدام الافتراضي
+        function getServerUrl() {
+            const storedIp = localStorage.getItem('server_ip') || DEFAULT_IP;
+            return `http://${storedIp}:3000`;
+        }
+
+        function showLoading() {
+            document.getElementById('loading-view').classList.remove('hidden');
+            document.getElementById('error-view').classList.add('hidden');
+        }
+
+        function showError() {
+            document.getElementById('loading-view').classList.add('hidden');
+            document.getElementById('error-view').classList.remove('hidden');
+            // تعبئة الحقل بالآي بي الحالي
+            const currentIp = localStorage.getItem('server_ip') || DEFAULT_IP;
+            document.getElementById('ip-address').value = currentIp;
+        }
+
+        async function checkConnection() {
+            showLoading();
+            const serverUrl = getServerUrl();
+            
+            // تحديد مهلة زمنية قدرها 4 ثوانٍ للفحص
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+            try {
+                // نقوم بالتحقق من استجابة السيرفر
+                const response = await fetch(serverUrl + '/api/auth/me', {
+                    method: 'GET',
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                
+                // إذا كان السيرفر متاحاً (حتى لو أرجع 401 Unauthorized فهذا يعني أنه يشتغل وموجود)
+                if (response.status === 200 || response.status === 401) {
+                    window.location.href = serverUrl;
+                } else {
+                    showError();
+                }
+            } catch (err) {
+                clearTimeout(timeoutId);
+                console.error("Connection failed:", err);
+                showError();
+            }
+        }
+
+        function saveAndRetry() {
+            let ipInput = document.getElementById('ip-address').value.trim();
+            // إزالة البروتوكولات والمنافذ لتنظيف الإدخال
+            ipInput = ipInput.replace(/^(https?:\/\/)?/, '').split(':')[0].split('/')[0];
+            
+            if (ipInput) {
+                localStorage.setItem('server_ip', ipInput);
+                checkConnection();
+            } else {
+                alert('يرجى إدخال عنوان IP صحيح');
+            }
+        }
+
+        // بدء الفحص عند تشغيل التطبيق تلقائياً
+        window.onload = checkConnection;
+    </script>
+</body>
+</html>

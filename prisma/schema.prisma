@@ -1,0 +1,222 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SUPER_ADMIN
+  OWNER
+  EMPLOYEE
+}
+
+enum Status {
+  ACTIVE
+  DISABLED
+}
+
+enum BillStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  LATE
+  CANCELLED
+}
+
+model User {
+  id           String       @id @default(uuid())
+  generatorId  String?
+  boardId      String?
+  name         String
+  username     String       @unique
+  passwordHash String
+  role         Role         @default(OWNER)
+  status       Status       @default(ACTIVE)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  permissions  Permission[]
+  generator    Generator?   @relation(fields: [generatorId], references: [id], onDelete: Cascade)
+  board        Board?       @relation(fields: [boardId], references: [id], onDelete: SetNull)
+}
+
+model Generator {
+  id                String        @id @default(uuid())
+  name              String
+  ownerName         String
+  phone             String
+  area              String
+  subscriptionType  String
+  subscriptionStart DateTime
+  subscriptionEnd   DateTime
+  paymentDueDay     Int           @default(10)
+  status            Status        @default(ACTIVE)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  users             User[]
+  boards            Board[]
+  subscribers       Subscriber[]
+  monthlyBills      MonthlyBill[]
+  payments              Payment[]
+  expenses              Expense[]
+  whatsappNotifications WhatsappNotification[]
+}
+
+model Board {
+  id              String        @id @default(uuid())
+  generatorId     String
+  name            String
+  area            String
+  address         String
+  defaultAmpPrice Int
+  status          Status        @default(ACTIVE)
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  generator       Generator     @relation(fields: [generatorId], references: [id], onDelete: Cascade)
+  subscribers     Subscriber[]
+  monthlyBills    MonthlyBill[]
+  payments        Payment[]
+  users           User[]
+}
+
+model Subscriber {
+  id           String        @id @default(uuid())
+  generatorId  String
+  boardId      String
+  name         String
+  phone         String
+  address      String
+  amps         Int
+  ampPrice     Int
+  oldDebt      Int           @default(0)
+  status       Status        @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  generator    Generator     @relation(fields: [generatorId], references: [id], onDelete: Cascade)
+  board                 Board                  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  monthlyBills          MonthlyBill[]
+  payments              Payment[]
+  whatsappNotifications WhatsappNotification[]
+}
+
+model MonthlyBill {
+  invoiceNumber   String?
+  id              String      @id @default(uuid())
+  generatorId     String
+  boardId         String
+  subscriberId    String
+  month           String
+  year            String
+  amps            Int
+  ampPrice        Int
+  monthAmount     Int
+  oldDebt         Int
+  paidAmount      Int         @default(0)
+  remainingAmount Int
+  paymentStatus   BillStatus  @default(UNPAID)
+  lastPaymentDate DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  generator             Generator              @relation(fields: [generatorId], references: [id], onDelete: Cascade)
+  board                 Board                  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  subscriber            Subscriber             @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  payments              Payment[]
+  reminderStatus        ReminderStatus         @default(NOT_SENT)
+  reminderSentAt        DateTime?
+  whatsappNotifications WhatsappNotification[]
+
+  @@unique([subscriberId, month, year])
+  @@unique([generatorId, invoiceNumber])
+}
+
+model Payment {
+  receiptNumber     String?
+  printedAt         DateTime?
+  printedByUserId   String?
+  id                String      @id @default(uuid())
+  generatorId       String
+  boardId           String
+  subscriberId      String
+  billId            String
+  amount            Int
+  ampPriceAtPayment Int
+  date              DateTime    @default(now())
+  note              String?
+  createdAt         DateTime    @default(now())
+  generator         Generator   @relation(fields: [generatorId], references: [id], onDelete: Cascade)
+  board             Board       @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  subscriber        Subscriber  @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  bill              MonthlyBill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@unique([generatorId, receiptNumber])
+}
+
+model Expense {
+  id          String    @id @default(uuid())
+  generatorId String
+  type        String
+  amount      Int
+  date        DateTime
+  note        String?
+  createdAt   DateTime  @default(now())
+  generator   Generator @relation(fields: [generatorId], references: [id], onDelete: Cascade)
+}
+
+model Permission {
+  id            String  @id @default(uuid())
+  userId        String
+  permissionKey String
+  value         Boolean @default(false)
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionKey])
+}
+
+enum ReminderStatus {
+  NOT_SENT
+  SENT
+  FAILED
+  PENDING
+}
+
+enum NotificationType {
+  PAYMENT_CONFIRMATION
+  UNPAID_REMINDER
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+  PENDING
+}
+
+model WhatsappNotification {
+  id           String             @id @default(uuid())
+  generatorId  String
+  subscriberId String
+  billId       String
+  toPhone      String
+  message      String
+  type         NotificationType   @default(UNPAID_REMINDER)
+  status       NotificationStatus
+  errorMessage String?
+  createdAt    DateTime           @default(now())
+  generator    Generator          @relation(fields: [generatorId], references: [id], onDelete: Cascade)
+  subscriber   Subscriber         @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  bill         MonthlyBill        @relation(fields: [billId], references: [id], onDelete: Cascade)
+}
+
+model PrintLog {
+  id           String   @id @default(uuid())
+  generatorId  String
+  billId       String
+  paymentId    String
+  userId       String
+  printerType  String
+  status       String
+  errorMessage String?
+  createdAt    DateTime @default(now())
+}

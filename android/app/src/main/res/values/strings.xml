@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">أمبيري</string>
+    <string name="title_activity_main">أمبيري</string>
+    <string name="package_name">com.moladaty.app</string>
+    <string name="custom_url_scheme">com.moladaty.app</string>
+</resources>
