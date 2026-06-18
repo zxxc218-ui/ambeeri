@@ -48,6 +48,7 @@ model Generator {
   ownerName         String
   phone             String
   area              String
+  logoUrl           String?
   subscriptionType  String
   subscriptionStart DateTime
   subscriptionEnd   DateTime

@@ -16,7 +16,8 @@ export async function GET() {
         name: true,
         ownerName: true,
         phone: true,
-        area: true
+        area: true,
+        logoUrl: true
       }
     });
 
@@ -43,7 +44,7 @@ export async function PUT(request: Request) {
 
   try {
     const body = await request.json();
-    const { name, ownerName, phone, area } = body;
+    const { name, ownerName, phone, area, logoUrl } = body;
 
     if (!name || !name.trim()) {
       return NextResponse.json({ error: 'اسم المولدة مطلوب' }, { status: 400 });
@@ -64,7 +65,8 @@ export async function PUT(request: Request) {
         name: name.trim(),
         ownerName: ownerName.trim(),
         phone: phone.trim(),
-        area: area.trim()
+        area: area.trim(),
+        logoUrl: logoUrl ? logoUrl.trim() : null
       }
     });
 

@@ -22,6 +22,9 @@ export async function GET(request: Request) {
         board: {
           select: { name: true }
         },
+        generator: {
+          select: { name: true, ownerName: true, phone: true, area: true, logoUrl: true }
+        },
         monthlyBills: {
           include: {
             payments: {

@@ -161,7 +161,7 @@ export default function DashboardPage() {
 
   // Generator settings state
   const [generatorInfo, setGeneratorInfo] = useState<any>(null);
-  const [generatorForm, setGeneratorForm] = useState({ name: '', ownerName: '', phone: '', area: '' });
+  const [generatorForm, setGeneratorForm] = useState({ name: '', ownerName: '', phone: '', area: '', logoUrl: '' });
   const [generatorMsg, setGeneratorMsg] = useState('');
   const [generatorError, setGeneratorError] = useState('');
 
@@ -687,6 +687,7 @@ export default function DashboardPage() {
           generatorOwner: generatorInfo?.ownerName || '',
           generatorPhone: generatorInfo?.phone || '',
           generatorArea: generatorInfo?.area || '',
+          generatorLogo: generatorInfo?.logoUrl || '',
           note: data.payment.note,
           amps: paymentAmps || selectedBill.amps?.toString() || '0',
           ampPrice: paymentAmpPrice || selectedBill.ampPrice || 0,
@@ -932,7 +933,8 @@ export default function DashboardPage() {
             name: data.generator.name || '',
             ownerName: data.generator.ownerName || '',
             phone: data.generator.phone || '',
-            area: data.generator.area || ''
+            area: data.generator.area || '',
+            logoUrl: data.generator.logoUrl || ''
           });
         }
       }
@@ -962,6 +964,93 @@ export default function DashboardPage() {
       console.error(err);
       setGeneratorError('حدث خطأ في الاتصال بالخادم');
     }
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/owner/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'فشل رفع الصورة');
+      } else {
+        setGeneratorForm(prev => ({ ...prev, logoUrl: data.url }));
+      }
+    } catch (err) {
+      console.error('Upload logo error:', err);
+      alert('حدث خطأ أثناء رفع الصورة');
+    }
+  };
+
+  const handleWhatsappShare = async (paymentData: any) => {
+    if (!paymentData) return;
+    
+    const formattedPhone = formatIraqiPhoneNumber(paymentData.whatsappPhone || paymentData.phone || '');
+    if (!formattedPhone) {
+      alert('رقم الهاتف غير صحيح، يرجى تعديل رقم المشترك');
+      return;
+    }
+
+    const receiptUrl = `${window.location.origin}/api/receipts/${paymentData.paymentId}/pdf`;
+    
+    try {
+      const element = document.getElementById('receipt-pdf-template');
+      if (element && navigator.canShare) {
+        const canvas = await html2canvas(element, {
+          scale: 3,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff'
+        });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF({
+          orientation: 'portrait',
+          unit: 'px',
+          format: [canvas.width / 3, canvas.height / 3]
+        });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width / 3, canvas.height / 3);
+        const pdfBlob = pdf.output('blob');
+        const filename = `receipt-${paymentData.invoiceNumber || paymentData.receiptNumber || 'print'}.pdf`;
+        const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+
+        if (navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            files: [pdfFile],
+            title: `وصل تسديد - ${paymentData.subscriberName}`,
+            text: `وصل تسديد مشترك من مولدة ${paymentData.generatorName || generatorInfo?.name || ''}`
+          });
+          return;
+        }
+      }
+    } catch (shareErr) {
+      console.warn('Web Share failed, falling back to message template:', shareErr);
+    }
+
+    const generatorName = paymentData.generatorName || generatorInfo?.name || 'أمبيري';
+    const subscriberName = paymentData.subscriberName;
+    const monthStr = `${paymentData.month} / ${paymentData.year}`;
+    const amountPaid = (paymentData.amount || 0).toLocaleString('ar-IQ');
+    const remainingAmount = (paymentData.remainingAmount || 0).toLocaleString('ar-IQ');
+    const receiptNumber = paymentData.receiptNumber || '—';
+
+    const message = `مرحباً، تم تسديد اشتراك مولدة [${generatorName}].
+المشترك: [${subscriberName}]
+الشهر: [${monthStr}]
+المبلغ المسدد: [${amountPaid}] د.ع
+المتبقي: [${remainingAmount}] د.ع
+رقم الوصل: [${receiptNumber}]
+رابط الوصل: [${receiptUrl}]`;
+
+    const encodedMsg = encodeURIComponent(message);
+    window.open(`https://wa.me/${formattedPhone}?text=${encodedMsg}`, '_blank', 'noopener,noreferrer');
   };
 
   const handleBulkUpdateBoardPrice = async () => {
@@ -1884,6 +1973,45 @@ export default function DashboardPage() {
                         onChange={(e) => setGeneratorForm({ ...generatorForm, name: e.target.value })}
                         required
                       />
+                    </div>
+                    <div className="form-group">
+                      <label>لوكو المولدة</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '4px' }}>
+                        <input 
+                          type="file" 
+                          accept="image/*"
+                          onChange={handleLogoUpload}
+                          style={{ display: 'none' }}
+                          id="logo-upload-input"
+                        />
+                        <button 
+                          type="button" 
+                          onClick={() => document.getElementById('logo-upload-input')?.click()}
+                          className="btn btn-secondary btn-sm"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        >
+                          <FileText size={14} /> رفع اللوكو
+                        </button>
+                        {generatorForm.logoUrl ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <img 
+                              src={generatorForm.logoUrl} 
+                              alt="لوكو المولدة" 
+                              style={{ width: '40px', height: '40px', borderRadius: '8px', objectFit: 'contain', border: '1px solid var(--border-dark)' }} 
+                            />
+                            <button 
+                              type="button" 
+                              onClick={() => setGeneratorForm({ ...generatorForm, logoUrl: '' })}
+                              className="btn btn-danger btn-sm"
+                              style={{ padding: '4px 8px', fontSize: '11px' }}
+                            >
+                              حذف
+                            </button>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>لم يتم رفع لوكو (سيتم استخدام الافتراضي)</span>
+                        )}
+                      </div>
                     </div>
                     <div className="form-group">
                       <label>اسم صاحب المولدة</label>
@@ -2906,11 +3034,16 @@ export default function DashboardPage() {
             return (
               <>
                 {/* Header */}
-                <div style={{ textAlign: 'center', borderBottom: '2px solid #10b981', paddingBottom: '12px', marginBottom: '16px' }}>
+                <div style={{ textAlign: 'center', borderBottom: '2px solid #10b981', paddingBottom: '12px', marginBottom: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <img 
+                    src={activeReceipt.generatorLogo || generatorInfo?.logoUrl || '/ambeeri-logo.png'} 
+                    alt="الشعار" 
+                    style={{ width: '70px', height: '70px', objectFit: 'contain', borderRadius: '12px', marginBottom: '8px', border: '1px solid #e5e7eb' }} 
+                  />
                   <h4 style={{ margin: 0, color: '#374151', fontSize: '15px', fontWeight: 'bold' }}>{activeReceipt.generatorName || generatorInfo?.name || 'نظام إدارة المولدة'}</h4>
                   
                   {/* Owner Info Block */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '6px', fontSize: '12px', color: '#4b5563' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '6px', fontSize: '12px', color: '#4b5563', width: '100%' }}>
                     {(activeReceipt.generatorOwner || generatorInfo?.ownerName) && (
                       <div>صاحب المولدة: <strong>{activeReceipt.generatorOwner || generatorInfo?.ownerName}</strong></div>
                     )}
@@ -2962,6 +3095,10 @@ export default function DashboardPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
                     <span style={{ color: '#6b7280' }}>الديون السابقة:</span>
                     <span style={{ fontWeight: 'bold', color: activeReceipt.oldDebt > 0 ? '#ef4444' : 'inherit' }}>{(activeReceipt.oldDebt || 0).toLocaleString('ar-IQ')} د.ع</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px', fontWeight: 'bold', borderTop: '1px dashed #cbd5e1', paddingTop: '6px', marginTop: '4px' }}>
+                    <span style={{ color: '#111827' }}>المبلغ الكلي المطلوب:</span>
+                    <span style={{ color: '#111827' }}>{((activeReceipt.monthAmount || (activeReceipt.amps * activeReceipt.ampPrice) || 0) + (activeReceipt.oldDebt || 0)).toLocaleString('ar-IQ')} د.ع</span>
                   </div>
                 </div>
 
@@ -3044,68 +3181,67 @@ export default function DashboardPage() {
             </div>
             
             <div className="modal-footer" style={{ borderTop: '1px solid var(--border-dark)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {(!user || !user.role || user.role === 'OWNER' || (user.permissions && user.permissions.print_receipt)) && (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={printingBluetooth}
-                  onClick={async () => {
-                    setPrintingBluetooth(true);
-                    const res = await printReceiptBluetooth(paymentSuccessData);
-                    setPrintingBluetooth(false);
-                    
-                    // Log print action
-                    await fetch('/api/owner/print-logs', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        billId: paymentSuccessData.billId,
-                        paymentId: paymentSuccessData.paymentId,
-                        printerType: 'BLUETOOTH',
-                        status: res.success ? 'SUCCESS' : 'FAILED',
-                        errorMessage: res.error || null
-                      })
-                    });
-                    
-                    if (res.success) {
-                      alert('تمت عملية الطباعة بنجاح!');
-                    } else {
-                      alert(`الطباعة عبر البلوتوث غير مدعومة على هذا الجهاز أو فشل الاتصال. ${res.error}\nيمكنك طباعة الوصل من المتصفح.`);
-                    }
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%' }}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
+                <button 
+                  type="button" 
+                  className="btn btn-secondary"
+                  onClick={() => window.open(`/api/receipts/${paymentSuccessData.paymentId}/pdf`, '_blank')}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
                 >
-                  <Printer size={16} />
-                  {printingBluetooth ? 'جاري الطباعة...' : 'طباعة وصل (حرارية بلوتوث)'}
+                  <FileText size={16} /> عرض الوصل PDF
                 </button>
-              )}
-              
-              <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                <button
-                  type="button"
+                
+                <button 
+                  type="button" 
                   className="btn btn-secondary"
                   disabled={downloadingPDF}
                   onClick={() => handleDownloadPDF(paymentSuccessData)}
-                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
                 >
-                  <FileText size={16} /> {downloadingPDF ? 'جاري التحميل...' : 'تحميل وصل PDF'}
+                  <FileText size={16} /> {downloadingPDF ? 'جاري...' : 'تحميل الوصل'}
                 </button>
                 
-                {paymentSuccessData.whatsappMessage && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const formatted = formatIraqiPhoneNumber(paymentSuccessData.whatsappPhone || '');
-                      if (!formatted) {
-                        alert('رقم الهاتف غير صحيح، يرجى إدخاله بصيغة عراقية صحيحة');
-                        return;
+                <button 
+                  type="button" 
+                  className="btn btn-whatsapp"
+                  onClick={() => handleWhatsappShare(paymentSuccessData)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '.85rem' }}
+                >
+                  <WhatsAppIcon size={16} /> إرسال واتساب
+                </button>
+
+                {(!user || !user.role || user.role === 'OWNER' || (user.permissions && user.permissions.print_receipt)) && (
+                  <button 
+                    type="button" 
+                    className="btn btn-primary"
+                    disabled={printingBluetooth}
+                    onClick={async () => {
+                      setPrintingBluetooth(true);
+                      const res = await printReceiptBluetooth(paymentSuccessData);
+                      setPrintingBluetooth(false);
+                      
+                      // Log print action
+                      await fetch('/api/owner/print-logs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          billId: paymentSuccessData.billId,
+                          paymentId: paymentSuccessData.paymentId,
+                          printerType: 'BLUETOOTH',
+                          status: res.success ? 'SUCCESS' : 'FAILED',
+                          errorMessage: res.error || null
+                        })
+                      });
+                      
+                      if (res.success) {
+                        alert('تمت عملية الطباعة بنجاح!');
+                      } else {
+                        alert(`الطباعة عبر البلوتوث غير مدعومة على هذا الجهاز أو فشل الاتصال. ${res.error}\nيمكنك طباعة الوصل من المتصفح.`);
                       }
-                      window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(paymentSuccessData.whatsappMessage)}`, '_blank', 'noopener,noreferrer');
                     }}
-                    className="btn btn-whatsapp"
-                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer' }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
                   >
-                    <WhatsAppIcon size={16} /> واتساب يدوياً
+                    <Printer size={16} /> {printingBluetooth ? 'جاري...' : 'طباعة الوصل'}
                   </button>
                 )}
               </div>

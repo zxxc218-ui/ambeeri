@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { printReceiptBluetooth } from '@/lib/bluetoothPrinter';
 import { ArrowRight, Home, User, Receipt, Printer, FileText, Wallet, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 const WhatsAppIcon = ({ size = 20, className = "" }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" className={className} style={{ display: 'inline-block', verticalAlign: 'middle' }}>
@@ -51,6 +53,8 @@ export default function SubscriberDetailPage() {
   const [lastPaymentId, setLastPaymentId] = useState<string | null>(null);
   const [paymentSuccessData, setPaymentSuccessData] = useState<any>(null);
   const [printingBluetooth, setPrintingBluetooth] = useState(false);
+  const [downloadingPDF, setDownloadingPDF] = useState(false);
+  const [pdfReceiptData, setPdfReceiptData] = useState<any>(null);
 
   useEffect(() => {
     if (id) {
@@ -124,8 +128,169 @@ export default function SubscriberDetailPage() {
     }
   };
 
-  const openReceipt = (paymentId: string) => {
-    window.open(`/api/owner/receipts?paymentId=${paymentId}`, '_blank');
+  const handleDownloadPDF = async (paymentData: any) => {
+    if (!paymentData) return;
+    setDownloadingPDF(true);
+    try {
+      const element = document.getElementById('receipt-pdf-template');
+      if (!element) {
+        alert('حدث خطأ أثناء العثور على قالب الوصل');
+        setDownloadingPDF(false);
+        return;
+      }
+      
+      const canvas = await html2canvas(element, {
+        scale: 3,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      });
+      
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'px',
+        format: [canvas.width / 3, canvas.height / 3]
+      });
+      
+      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width / 3, canvas.height / 3);
+      const filename = `receipt-${paymentData.invoiceNumber || paymentData.receiptNumber || 'print'}.pdf`;
+      pdf.save(filename);
+      
+      // Log print action
+      await fetch('/api/owner/print-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          billId: paymentData.billId,
+          paymentId: paymentData.paymentId,
+          printerType: 'PDF_DOWNLOAD',
+          status: 'SUCCESS'
+        })
+      });
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      alert('حدث خطأ أثناء تحميل ملف الـ PDF. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setDownloadingPDF(false);
+    }
+  };
+
+  const handleWhatsappShare = async (paymentData: any) => {
+    if (!paymentData) return;
+    
+    const formattedPhone = formatIraqiPhoneNumber(paymentData.whatsappPhone || paymentData.phone || '');
+    if (!formattedPhone) {
+      alert('رقم الهاتف غير صحيح، يرجى تعديل رقم المشترك');
+      return;
+    }
+
+    const receiptUrl = `${window.location.origin}/api/receipts/${paymentData.paymentId}/pdf`;
+    
+    try {
+      const element = document.getElementById('receipt-pdf-template');
+      if (element && navigator.canShare) {
+        const canvas = await html2canvas(element, {
+          scale: 3,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff'
+        });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF({
+          orientation: 'portrait',
+          unit: 'px',
+          format: [canvas.width / 3, canvas.height / 3]
+        });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width / 3, canvas.height / 3);
+        const pdfBlob = pdf.output('blob');
+        const filename = `receipt-${paymentData.invoiceNumber || paymentData.receiptNumber || 'print'}.pdf`;
+        const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+
+        if (navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            files: [pdfFile],
+            title: `وصل تسديد - ${paymentData.subscriberName}`,
+            text: `وصل تسديد مشترك من مولدة ${paymentData.generatorName || subscriber?.generator?.name || ''}`
+          });
+          return;
+        }
+      }
+    } catch (shareErr) {
+      console.warn('Web Share failed, falling back to message template:', shareErr);
+    }
+
+    const generatorName = paymentData.generatorName || subscriber?.generator?.name || 'أمبيري';
+    const subscriberName = paymentData.subscriberName;
+    const monthStr = `${paymentData.month} / ${paymentData.year}`;
+    const amountPaid = (paymentData.amount || 0).toLocaleString('ar-IQ');
+    const remainingAmount = (paymentData.remainingAmount || 0).toLocaleString('ar-IQ');
+    const receiptNumber = paymentData.receiptNumber || '—';
+
+    const message = `مرحباً، تم تسديد اشتراك مولدة [${generatorName}].
+المشترك: [${subscriberName}]
+الشهر: [${monthStr}]
+المبلغ المسدد: [${amountPaid}] د.ع
+المتبقي: [${remainingAmount}] د.ع
+رقم الوصل: [${receiptNumber}]
+رابط الوصل: [${receiptUrl}]`;
+
+    const encodedMsg = encodeURIComponent(message);
+    window.open(`https://wa.me/${formattedPhone}?text=${encodedMsg}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const openReceipt = async (paymentId: string) => {
+    try {
+      const res = await fetch(`/api/owner/receipts?paymentId=${paymentId}&format=json`);
+      if (!res.ok) {
+        const errData = await res.json();
+        alert(errData.error || 'حدث خطأ أثناء تحميل بيانات الوصل');
+        return;
+      }
+      const data = await res.json();
+      const p = data.payment;
+      if (!p) {
+        alert('بيانات الوصل غير متوفرة');
+        return;
+      }
+
+      // Convert to receiptData format
+      const receiptData = {
+        paymentId: p.id,
+        billId: p.billId,
+        receiptNumber: p.receiptNumber || p.id,
+        invoiceNumber: p.bill?.invoiceNumber || '',
+        date: p.date,
+        amount: p.amount,
+        remainingAmount: p.bill?.remainingAmount || 0,
+        subscriberName: subscriber?.name || '',
+        phone: subscriber?.phone || '',
+        boardName: subscriber?.board?.name || '',
+        month: p.bill?.month || '',
+        year: p.bill?.year || '',
+        employeeName: user?.name || '',
+        generatorName: subscriber?.generator?.name || '',
+        generatorOwner: subscriber?.generator?.ownerName || '',
+        generatorPhone: subscriber?.generator?.phone || '',
+        generatorArea: subscriber?.generator?.area || '',
+        generatorLogo: subscriber?.generator?.logoUrl || '',
+        note: p.note || '',
+        amps: subscriber?.amps?.toString() || p.bill?.amps?.toString() || '0',
+        ampPrice: p.bill?.ampPrice || 0,
+        oldDebt: p.bill?.oldDebt || 0
+      };
+
+      setPdfReceiptData(receiptData);
+
+      // Wait 300ms for React to render the template in the DOM, then download
+      setTimeout(async () => {
+        await handleDownloadPDF(receiptData);
+        setPdfReceiptData(null);
+      }, 300);
+    } catch (err) {
+      console.error(err);
+      alert('فشل الاتصال بالسيرفر لتنزيل الوصل');
+    }
   };
 
   const handleCollectPayment = async (e: React.FormEvent) => {
@@ -163,8 +328,15 @@ export default function SubscriberDetailPage() {
           month: selectedBill.month,
           year: selectedBill.year,
           employeeName: user.name,
-          generatorName: user.genName || '',
+          generatorName: subscriber.generator?.name || user.genName || '',
+          generatorOwner: subscriber.generator?.ownerName || '',
+          generatorPhone: subscriber.generator?.phone || '',
+          generatorArea: subscriber.generator?.area || '',
+          generatorLogo: subscriber.generator?.logoUrl || '',
           note: data.payment.note,
+          amps: selectedBill.amps?.toString() || subscriber.amps?.toString() || '0',
+          ampPrice: paymentAmpPrice || selectedBill.ampPrice || subscriber.ampPrice || 0,
+          oldDebt: selectedBill.oldDebt || 0,
           whatsappMessage: data.whatsappMessage,
           whatsappPhone: data.whatsappPhone,
           warning: data.warning
@@ -531,6 +703,146 @@ export default function SubscriberDetailPage() {
         </div>
       )}
 
+      {/* Hidden PDF template for receipt generation */}
+      {(paymentSuccessData || pdfReceiptData) && (
+        <div 
+          id="receipt-pdf-template" 
+          style={{
+            position: 'absolute',
+            left: '-9999px',
+            top: '-9999px',
+            width: '400px',
+            padding: '24px',
+            backgroundColor: '#ffffff',
+            color: '#1f2937',
+            fontFamily: "'Cairo', sans-serif",
+            direction: 'rtl',
+            textAlign: 'right',
+            boxSizing: 'border-box',
+            borderRadius: '12px',
+            border: '2px solid #10b981',
+            boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
+          }}
+        >
+          {(() => {
+            const activeReceipt = pdfReceiptData || paymentSuccessData;
+            if (!activeReceipt) return null;
+            return (
+              <>
+                {/* Header */}
+                <div style={{ textAlign: 'center', borderBottom: '2px solid #10b981', paddingBottom: '12px', marginBottom: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <img 
+                    src={activeReceipt.generatorLogo || subscriber?.generator?.logoUrl || '/ambeeri-logo.png'} 
+                    alt="الشعار" 
+                    style={{ width: '70px', height: '70px', objectFit: 'contain', borderRadius: '12px', marginBottom: '8px', border: '1px solid #e5e7eb' }} 
+                  />
+                  <h4 style={{ margin: 0, color: '#374151', fontSize: '15px', fontWeight: 'bold' }}>{activeReceipt.generatorName || subscriber?.generator?.name || 'نظام إدارة المولدة'}</h4>
+                  
+                  {/* Owner Info Block */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '6px', fontSize: '12px', color: '#4b5563', width: '100%' }}>
+                    {(activeReceipt.generatorOwner || subscriber?.generator?.ownerName) && (
+                      <div>صاحب المولدة: <strong>{activeReceipt.generatorOwner || subscriber?.generator?.ownerName}</strong></div>
+                    )}
+                    {(activeReceipt.generatorPhone || subscriber?.generator?.phone) && (
+                      <div>رقم الهاتف: <strong>{activeReceipt.generatorPhone || subscriber?.generator?.phone}</strong></div>
+                    )}
+                    {(activeReceipt.generatorArea || subscriber?.generator?.area) && (
+                      <div>العنوان: <strong>{activeReceipt.generatorArea || subscriber?.generator?.area}</strong></div>
+                    )}
+                  </div>
+
+                  <h1 style={{ margin: '14px 0 0 0', color: '#10b981', fontSize: '26px', fontWeight: '800', letterSpacing: '0.5px' }}>وصل تسديد</h1>
+                </div>
+
+                {/* Details */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px', color: '#374151' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>رقم الفاتورة:</span>
+                    <span style={{ fontWeight: 'bold' }}>{activeReceipt.invoiceNumber || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>رقم الوصل:</span>
+                    <span style={{ fontWeight: 'bold', fontFamily: 'monospace' }}>{activeReceipt.receiptNumber || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>تاريخ التسديد:</span>
+                    <span>{activeReceipt.date ? new Date(activeReceipt.date).toLocaleDateString('ar-IQ', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>اسم المشترك:</span>
+                    <span style={{ fontWeight: 'bold', color: '#111827' }}>{activeReceipt.subscriberName || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>البورد:</span>
+                    <span>{activeReceipt.boardName || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>الشهر المسدد:</span>
+                    <span style={{ fontWeight: 'bold' }}>{activeReceipt.month} / {activeReceipt.year}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>عدد الأمبيرات:</span>
+                    <span style={{ fontWeight: 'bold' }}>{activeReceipt.amps || '—'} أمبير</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>سعر الأمبير:</span>
+                    <span>{(activeReceipt.ampPrice || 0).toLocaleString('ar-IQ')} د.ع</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>الديون السابقة:</span>
+                    <span style={{ fontWeight: 'bold', color: activeReceipt.oldDebt > 0 ? '#ef4444' : 'inherit' }}>{(activeReceipt.oldDebt || 0).toLocaleString('ar-IQ')} د.ع</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px', fontWeight: 'bold', borderTop: '1px dashed #cbd5e1', paddingTop: '6px', marginTop: '4px' }}>
+                    <span style={{ color: '#111827' }}>المبلغ الكلي المطلوب:</span>
+                    <span style={{ color: '#111827' }}>{((activeReceipt.monthAmount || (activeReceipt.amps * activeReceipt.ampPrice) || 0) + (activeReceipt.oldDebt || 0)).toLocaleString('ar-IQ')} د.ع</span>
+                  </div>
+                </div>
+
+                {/* Amount Box */}
+                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '16px', margin: '18px 0', textAlign: 'center' }}>
+                  <div style={{ fontSize: '13px', color: '#15803d', marginBottom: '4px', fontWeight: 'bold' }}>المبلغ المسدد</div>
+                  <div style={{ fontSize: '32px', fontWeight: '800', color: '#166534' }}>
+                    {activeReceipt.amount ? (activeReceipt.amount).toLocaleString('ar-IQ') : '0'} د.ع
+                  </div>
+                </div>
+
+                {/* Remaining Amount & Status */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px', color: '#374151' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#6b7280' }}>حالة الدفع:</span>
+                    <span style={{ 
+                      fontWeight: 'bold', 
+                      color: activeReceipt.remainingAmount <= 0 ? '#15803d' : (activeReceipt.amount > 0 ? '#d97706' : '#ef4444') 
+                    }}>
+                      {activeReceipt.remainingAmount <= 0 ? 'تم تسديد الحساب بالكامل' : (activeReceipt.amount > 0 ? 'تسديد جزئي' : 'غير مسدد')}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
+                    <span style={{ color: '#6b7280' }}>المتبقي الكلي:</span>
+                    <span style={{ fontWeight: 'bold', color: activeReceipt.remainingAmount > 0 ? '#ef4444' : '#15803d' }}>
+                      {(activeReceipt.remainingAmount).toLocaleString('ar-IQ')} د.ع
+                    </span>
+                  </div>
+                  {activeReceipt.note && (
+                    <div style={{ borderTop: '1px dashed #e5e7eb', paddingTop: '8px', marginTop: '6px' }}>
+                      <span style={{ color: '#6b7280', display: 'block', fontSize: '11px', marginBottom: '2px' }}>ملاحظة:</span>
+                      <span style={{ fontSize: '12px', fontStyle: 'italic', color: '#4b5563', display: 'block', background: '#f9fafb', padding: '8px', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
+                        {activeReceipt.note}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer message */}
+                <div style={{ textAlign: 'center', borderTop: '1px solid #e5e7eb', paddingTop: '10px', marginTop: '20px', fontSize: '11px', color: '#9ca3af' }}>
+                  شكراً لكم على تسديدكم.
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
+
       {/* Payment Success & Printing Modal */}
       {paymentSuccessData && (
         <div className="modal show" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
@@ -565,81 +877,67 @@ export default function SubscriberDetailPage() {
             </div>
             
             <div className="modal-footer" style={{ borderTop: '1px solid var(--border-dark)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {(!user || !user.role || user.role === 'OWNER' || (user.permissions && user.permissions.print_receipt)) && (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={printingBluetooth}
-                  onClick={async () => {
-                    setPrintingBluetooth(true);
-                    const res = await printReceiptBluetooth(paymentSuccessData);
-                    setPrintingBluetooth(false);
-                    
-                    // Log print action
-                    await fetch('/api/owner/print-logs', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        billId: paymentSuccessData.billId,
-                        paymentId: paymentSuccessData.paymentId,
-                        printerType: 'BLUETOOTH',
-                        status: res.success ? 'SUCCESS' : 'FAILED',
-                        errorMessage: res.error || null
-                      })
-                    });
-                    
-                    if (res.success) {
-                      alert('تمت عملية الطباعة بنجاح!');
-                    } else {
-                      alert(`الطباعة عبر البلوتوث غير مدعومة على هذا الجهاز أو فشل الاتصال. ${res.error}\nيمكنك طباعة الوصل من المتصفح.`);
-                    }
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%' }}
-                >
-                  <Printer style={{ width: '18px', height: '18px' }} />
-                  {printingBluetooth ? 'جاري الطباعة...' : 'طباعة وصل (حرارية بلوتوث)'}
-                </button>
-              )}
-              
-              <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                <button
-                  type="button"
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
+                <button 
+                  type="button" 
                   className="btn btn-secondary"
-                  onClick={async () => {
-                    window.open(`/api/owner/receipts?paymentId=${paymentSuccessData.paymentId}`, '_blank');
-                    
-                    // Log print action
-                    await fetch('/api/owner/print-logs', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        billId: paymentSuccessData.billId,
-                        paymentId: paymentSuccessData.paymentId,
-                        printerType: 'BROWSER',
-                        status: 'SUCCESS'
-                      })
-                    });
-                  }}
-                  style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  onClick={() => window.open(`/api/receipts/${paymentSuccessData.paymentId}/pdf`, '_blank')}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
                 >
-                  <FileText style={{ width: '16px', height: '16px' }} /> طباعة المتصفح
+                  <FileText size={16} /> عرض الوصل PDF
                 </button>
                 
-                {paymentSuccessData.whatsappMessage && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const formatted = formatIraqiPhoneNumber(paymentSuccessData.whatsappPhone || '');
-                      if (!formatted) {
-                        alert('رقم الهاتف غير صحيح، يرجى إدخاله بصيغة عراقية صحيحة');
-                        return;
+                <button 
+                  type="button" 
+                  className="btn btn-secondary"
+                  disabled={downloadingPDF}
+                  onClick={() => handleDownloadPDF(paymentSuccessData)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
+                >
+                  <FileText size={16} /> {downloadingPDF ? 'جاري...' : 'تحميل الوصل'}
+                </button>
+                
+                <button 
+                  type="button" 
+                  className="btn btn-whatsapp"
+                  onClick={() => handleWhatsappShare(paymentSuccessData)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '.85rem' }}
+                >
+                  <WhatsAppIcon size={16} /> إرسال واتساب
+                </button>
+
+                {(!user || !user.role || user.role === 'OWNER' || (user.permissions && user.permissions.print_receipt)) && (
+                  <button 
+                    type="button" 
+                    className="btn btn-primary"
+                    disabled={printingBluetooth}
+                    onClick={async () => {
+                      setPrintingBluetooth(true);
+                      const res = await printReceiptBluetooth(paymentSuccessData);
+                      setPrintingBluetooth(false);
+                      
+                      // Log print action
+                      await fetch('/api/owner/print-logs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          billId: paymentSuccessData.billId,
+                          paymentId: paymentSuccessData.paymentId,
+                          printerType: 'BLUETOOTH',
+                          status: res.success ? 'SUCCESS' : 'FAILED',
+                          errorMessage: res.error || null
+                        })
+                      });
+                      
+                      if (res.success) {
+                        alert('تمت عملية الطباعة بنجاح!');
+                      } else {
+                        alert(`الطباعة عبر البلوتوث غير مدعومة على هذا الجهاز أو فشل الاتصال. ${res.error}\nيمكنك طباعة الوصل من المتصفح.`);
                       }
-                      window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(paymentSuccessData.whatsappMessage)}`, '_blank', 'noopener,noreferrer');
                     }}
-                    className="btn btn-whatsapp"
-                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: '#25d366', color: '#fff', border: 'none', cursor: 'pointer' }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
                   >
-                    <WhatsAppIcon size={16} /> واتساب يدوياً
+                    <Printer size={16} /> {printingBluetooth ? 'جاري...' : 'طباعة الوصل'}
                   </button>
                 )}
               </div>
