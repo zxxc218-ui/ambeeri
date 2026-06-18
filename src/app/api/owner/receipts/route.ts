@@ -299,7 +299,7 @@ export async function GET(request: Request) {
       <div class="owner-card">
         <div><span class="label">صاحب المولدة:</span> ${payment.generator?.ownerName || ''}</div>
         <div><span class="label">رقم الهاتف:</span> ${payment.generator?.phone || ''}</div>
-        <div><span class="label">العنوان:</span> ${payment.generator?.address || ''}</div>
+        <div><span class="label">العنوان:</span> ${payment.generator?.area || ''}</div>
       </div>
       <div class="receipt-title">وصل تسديد</div>
       <span class="receipt-badge">✓ وصل رسمي</span>
