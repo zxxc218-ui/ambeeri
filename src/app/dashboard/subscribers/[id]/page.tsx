@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { printReceiptBluetooth } from '@/lib/bluetoothPrinter';
+import { printReceiptDirectBluetooth } from '@/lib/bluetoothPrinter';
 import { ArrowRight, Home, User, Receipt, Printer, FileText, Wallet, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -55,6 +55,13 @@ export default function SubscriberDetailPage() {
   const [printingBluetooth, setPrintingBluetooth] = useState(false);
   const [downloadingPDF, setDownloadingPDF] = useState(false);
   const [pdfReceiptData, setPdfReceiptData] = useState<any>(null);
+  const [savedPrinterId, setSavedPrinterId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setSavedPrinterId(localStorage.getItem('selectedPrinterId'));
+    }
+  }, []);
 
   useEffect(() => {
     if (id) {
@@ -173,6 +180,27 @@ export default function SubscriberDetailPage() {
       alert('حدث خطأ أثناء تحميل ملف الـ PDF. يرجى المحاولة مرة أخرى.');
     } finally {
       setDownloadingPDF(false);
+    }
+  };
+
+  const handleDirectPrint = async (paymentData: any) => {
+    if (!paymentData) return;
+    setPrintingBluetooth(true);
+    try {
+      const res = await printReceiptDirectBluetooth(paymentData, savedPrinterId);
+      if (res.success) {
+        if (res.device) {
+          localStorage.setItem('selectedPrinterId', res.device.id);
+          setSavedPrinterId(res.device.id);
+        }
+        alert('تمت عملية الطباعة بنجاح!');
+      } else {
+        alert(res.error || 'فشلت عملية الطباعة.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ غير متوقع أثناء الطباعة.');
+    } finally {
+      setPrintingBluetooth(false);
     }
   };
 
@@ -989,24 +1017,53 @@ export default function SubscriberDetailPage() {
                 </button>
 
                 {(!user || !user.role || user.role === 'OWNER' || (user.permissions && user.permissions.print_receipt)) && (
-                  <>
+                  savedPrinterId ? (
+                    <>
+                      <button 
+                        type="button" 
+                        className="btn btn-primary"
+                        disabled={printingBluetooth}
+                        onClick={() => handleDirectPrint(paymentSuccessData)}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
+                      >
+                        <Printer size={16} /> {printingBluetooth ? 'جاري الطباعة...' : 'طباعة الوصل'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={async () => {
+                          setPrintingBluetooth(true);
+                          try {
+                            const res = await printReceiptDirectBluetooth(paymentSuccessData, null);
+                            if (res.success && res.device) {
+                              localStorage.setItem('selectedPrinterId', res.device.id);
+                              setSavedPrinterId(res.device.id);
+                              alert('تم تغيير الطابعة الافتراضية بنجاح!');
+                            } else if (res.error) {
+                              alert(res.error);
+                            }
+                          } catch (e: any) {
+                            alert(e.message || 'حدث خطأ');
+                          } finally {
+                            setPrintingBluetooth(false);
+                          }
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '6px', fontSize: '.75rem' }}
+                      >
+                        ⚙️ تغيير الطابعة
+                      </button>
+                    </>
+                  ) : (
                     <button 
                       type="button" 
-                      className="btn btn-secondary"
-                      onClick={() => handleThermalPrint(paymentSuccessData, 384)}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
+                      className="btn btn-primary"
+                      disabled={printingBluetooth}
+                      onClick={() => handleDirectPrint(paymentSuccessData)}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem', gridColumn: 'span 2' }}
                     >
-                      <Printer size={16} /> طباعة حرارية (58mm)
+                      <Printer size={16} /> {printingBluetooth ? 'جاري الاتصال...' : 'اختيار الطابعة'}
                     </button>
-                    <button 
-                      type="button" 
-                      className="btn btn-secondary"
-                      onClick={() => handleThermalPrint(paymentSuccessData, 576)}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
-                    >
-                      <Printer size={16} /> طباعة حرارية (80mm)
-                    </button>
-                  </>
+                  )
                 )}
               </div>
               

@@ -154,20 +154,35 @@ export function encodeArabic(text: string): Uint8Array {
   return new Uint8Array(processedBytes);
 }
 
-// Connect to Bluetooth thermal printer and print receipt
-export async function printReceiptBluetooth(paymentData: any): Promise<{ success: boolean, error?: string }> {
-  try {
-    const nav = navigator as any;
-    if (!nav.bluetooth) {
-      return { success: false, error: 'Web Bluetooth API is not supported on this device/browser.' };
-    }
+// Connect to Bluetooth thermal printer and print receipt directly as a bitmap
+export async function connectToDevice(deviceId?: string | null): Promise<any> {
+  const nav = navigator as any;
+  if (!nav.bluetooth) {
+    throw new Error('الطباعة المباشرة من المتصفح غير مدعومة لهذه الطابعة. استخدم تطبيق الطابعة أو نسخة APK.');
+  }
 
-    console.log('Requesting Bluetooth device...');
-    const device = await nav.bluetooth.requestDevice({
+  let device: any = null;
+  if (deviceId) {
+    try {
+      const devices = await nav.bluetooth.getDevices();
+      device = devices.find((d: any) => d.id === deviceId);
+    } catch (e) {
+      console.warn('getDevices failed or not supported:', e);
+    }
+  }
+
+  if (!device) {
+    device = await nav.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb', '0000e911-0000-1000-8000-00805f9b34fb']
     });
+  }
 
+  return device;
+}
+
+export async function printImageToDevice(device: any, canvas: HTMLCanvasElement): Promise<{ success: boolean, error?: string }> {
+  try {
     console.log('Connecting to GATT server...');
     const server = await device.gatt.connect();
 
@@ -190,26 +205,66 @@ export async function printReceiptBluetooth(paymentData: any): Promise<{ success
       return { success: false, error: 'Could not find a write characteristic on the printer.' };
     }
 
-    console.log('Formatting ESC/POS commands...');
-    
-    // Command bytes constants
+    console.log('Generating ESC/POS raster image...');
+    const H = canvas.height;
+    const W = canvas.width; // should be 576
+    const widthBytes = Math.floor((W + 7) / 8); // 72 bytes for 576px
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return { success: false, error: 'Could not get 2d context from canvas.' };
+    }
+    const imgData = ctx.getImageData(0, 0, W, H);
+    const data = imgData.data;
+
+    // Pack bits into bytes
+    const rasterData = new Uint8Array(widthBytes * H);
+    let byteIdx = 0;
+
+    for (let y = 0; y < H; y++) {
+      for (let xByte = 0; xByte < widthBytes; xByte++) {
+        let byteVal = 0;
+        for (let bit = 0; bit < 8; bit++) {
+          const x = xByte * 8 + bit;
+          if (x < W) {
+            const idx = (y * W + x) * 4;
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+            const a = data[idx + 3];
+
+            let isBlack = false;
+            if (a >= 128) {
+              const grey = 0.299 * r + 0.587 * g + 0.114 * b;
+              isBlack = grey < 128; // black threshold
+            }
+
+            if (isBlack) {
+              byteVal |= (1 << (7 - bit));
+            }
+          }
+        }
+        rasterData[byteIdx++] = byteVal;
+      }
+    }
+
+    // ESC/POS commands
     const ESC = 0x1B;
     const GS = 0x1D;
-    
+
     const INIT = new Uint8Array([ESC, 0x40]); // ESC @ (Init)
-    const CENTER = new Uint8Array([ESC, 0x61, 0x01]); // ESC a 1 (Center)
-    const RIGHT = new Uint8Array([ESC, 0x61, 0x02]); // ESC a 2 (Right)
-    const BOLD_ON = new Uint8Array([ESC, 0x45, 0x01]); // ESC E 1
-    const BOLD_OFF = new Uint8Array([ESC, 0x45, 0x00]); // ESC E 0
-    const DOUBLE_ON = new Uint8Array([GS, 0x21, 0x11]); // GS ! 0x11 (Double height and width)
-    const DOUBLE_OFF = new Uint8Array([GS, 0x21, 0x00]); // GS ! 0x00 (Normal)
-    const CODEPAGE_1256 = new Uint8Array([ESC, 0x74, 52]); // ESC t 52 (CP1256 codepage for Arabic)
+    // GS v 0 m xL xH yL yH
+    const GS_v_0 = new Uint8Array([
+      GS, 0x76, 0x30, 0,
+      widthBytes % 256, Math.floor(widthBytes / 256),
+      H % 256, Math.floor(H / 256)
+    ]);
+    const LF = new Uint8Array([10]);
     const FEED_AND_CUT = new Uint8Array([GS, 0x56, 0x42, 0x00]); // GS V 66 0
-    const LF = new Uint8Array([10]); // Line Feed
-    
+
+    // Send logic
     const sendBuffer = async (bytes: Uint8Array) => {
-      // Chunk sending if size > 20 bytes (BLE MTU limitation is usually 20 bytes)
-      const chunkSize = 20;
+      const chunkSize = 100;
       for (let i = 0; i < bytes.length; i += chunkSize) {
         const chunk = bytes.slice(i, i + chunkSize);
         if (writeChar.properties.writeWithoutResponse) {
@@ -217,111 +272,92 @@ export async function printReceiptBluetooth(paymentData: any): Promise<{ success
         } else {
           await writeChar.writeValue(chunk);
         }
-        // Small delay to prevent BLE congestion
-        await new Promise(resolve => setTimeout(resolve, 15));
+        await new Promise(resolve => setTimeout(resolve, 10)); // short delay to prevent BLE congestion
       }
     };
 
-    // Build the ticket
+    console.log('Sending print buffer...');
     await sendBuffer(INIT);
-    await sendBuffer(CODEPAGE_1256);
-    
-    // Title: أمبيري
-    await sendBuffer(CENTER);
-    await sendBuffer(DOUBLE_ON);
-    await sendBuffer(BOLD_ON);
-    await sendBuffer(encodeArabic('أمبيري'));
+    await sendBuffer(GS_v_0);
+    await sendBuffer(rasterData);
     await sendBuffer(LF);
-    await sendBuffer(DOUBLE_OFF);
-    
-    // Generator Name
-    const genName = paymentData.generatorName || 'أمبيري';
-    await sendBuffer(encodeArabic(genName));
-    await sendBuffer(LF);
-    await sendBuffer(BOLD_OFF);
-    
-    // Divider
-    await sendBuffer(encodeArabic('--------------------------------'));
-    await sendBuffer(LF);
-    
-    await sendBuffer(RIGHT);
-    
-    // Receipt Number & Date
-    const recNum = paymentData.receiptNumber || paymentData.paymentId || '';
-    await sendBuffer(encodeArabic(`رقم الوصل: ${recNum}`));
-    await sendBuffer(LF);
-    
-    const invNum = paymentData.invoiceNumber || '';
-    if (invNum) {
-      await sendBuffer(encodeArabic(`رقم الفاتورة: ${invNum}`));
-      await sendBuffer(LF);
-    }
-    
-    const payDate = new Date(paymentData.date || Date.now()).toLocaleDateString('ar-IQ');
-    await sendBuffer(encodeArabic(`تاريخ الدفع: ${payDate}`));
-    await sendBuffer(LF);
-
-    // Subscriber details
-    await sendBuffer(encodeArabic(`المشترك: ${paymentData.subscriberName || ''}`));
-    await sendBuffer(LF);
-    
-    await sendBuffer(encodeArabic(`الهاتف: ${paymentData.phone || ''}`));
-    await sendBuffer(LF);
-    
-    await sendBuffer(encodeArabic(`البورد: ${paymentData.boardName || ''}`));
-    await sendBuffer(LF);
-    
-    await sendBuffer(encodeArabic(`الشهر: ${paymentData.month || ''} / ${paymentData.year || ''}`));
-    await sendBuffer(LF);
-    
-    await sendBuffer(encodeArabic(`الموظف: ${paymentData.employeeName || ''}`));
-    await sendBuffer(LF);
-
-    // Divider
-    await sendBuffer(CENTER);
-    await sendBuffer(encodeArabic('--------------------------------'));
-    await sendBuffer(LF);
-
-    // Amount Paid
-    await sendBuffer(DOUBLE_ON);
-    await sendBuffer(BOLD_ON);
-    const amountVal = (paymentData.amount || 0).toLocaleString('ar-IQ');
-    await sendBuffer(encodeArabic(`المسدد: ${amountVal} د.ع`));
-    await sendBuffer(LF);
-    await sendBuffer(DOUBLE_OFF);
-
-    // Remaining
-    const remaining = paymentData.remainingAmount || 0;
-    if (remaining > 0) {
-      const remainingVal = remaining.toLocaleString('ar-IQ');
-      await sendBuffer(encodeArabic(`المتبقي: ${remainingVal} د.ع`));
-    } else {
-      await sendBuffer(encodeArabic('حالة الدفع: مدفوع بالكامل'));
-    }
-    await sendBuffer(LF);
-    await sendBuffer(BOLD_OFF);
-    
-    if (paymentData.note) {
-      await sendBuffer(encodeArabic(`ملاحظة: ${paymentData.note}`));
-      await sendBuffer(LF);
-    }
-
-    // Divider
-    await sendBuffer(encodeArabic('--------------------------------'));
-    await sendBuffer(LF);
-    
-    // Thank you message
-    await sendBuffer(encodeArabic('شكراً لتسديدكم'));
-    await sendBuffer(LF);
-    
-    // Extra feeds and cut
-    await sendBuffer(new Uint8Array([10, 10, 10]));
+    await sendBuffer(new Uint8Array([10, 10, 10])); // extra spacing
     await sendBuffer(FEED_AND_CUT);
-    
-    console.log('Printed successfully!');
+
+    console.log('Printed image successfully!');
     return { success: true };
   } catch (err: any) {
     console.error(err);
     return { success: false, error: err.message || 'Bluetooth connection failed.' };
   }
 }
+
+export async function printReceiptDirectBluetooth(
+  paymentData: any,
+  deviceId: string | null
+): Promise<{ success: boolean, device?: any, error?: string }> {
+  const nav = navigator as any;
+  if (!nav.bluetooth) {
+    return { success: false, error: 'الطباعة المباشرة من المتصفح غير مدعومة لهذه الطابعة. استخدم تطبيق الطابعة أو نسخة APK.' };
+  }
+
+  // 1. Get receipt HTML template
+  const element = document.getElementById('receipt-pdf-template');
+  if (!element) {
+    return { success: false, error: 'حدث خطأ أثناء العثور على قالب الوصل' };
+  }
+
+  // 2. Clone it and format for 80mm printer (576px width)
+  const width = 576;
+  const clone = element.cloneNode(true) as HTMLDivElement;
+  clone.style.position = 'relative';
+  clone.style.left = '0';
+  clone.style.top = '0';
+  clone.style.width = width + 'px';
+  clone.style.maxWidth = width + 'px';
+  clone.style.boxShadow = 'none';
+  clone.style.border = 'none';
+  clone.style.borderRadius = '0';
+  clone.style.padding = '10px';
+  clone.style.margin = '0';
+  
+  // Make it high contrast black and white
+  clone.style.filter = 'grayscale(1) contrast(2)';
+  clone.style.color = '#000';
+  clone.style.backgroundColor = '#fff';
+  
+  document.body.appendChild(clone);
+
+  let canvas: HTMLCanvasElement;
+  try {
+    const html2canvasLib = (await import('html2canvas')).default;
+    canvas = await html2canvasLib(clone, {
+      width: width,
+      scale: 1, // scale 1 for 576px direct bitmap printing
+      useCORS: true,
+      backgroundColor: '#ffffff'
+    });
+  } catch (err: any) {
+    document.body.removeChild(clone);
+    return { success: false, error: 'فشل تحويل الوصل لصورة: ' + err.message };
+  }
+
+  document.body.removeChild(clone);
+
+  // 3. Connect to printer
+  let device: any;
+  try {
+    device = await connectToDevice(deviceId);
+  } catch (err: any) {
+    return { success: false, error: 'الطباعة المباشرة من المتصفح غير مدعومة لهذه الطابعة. استخدم تطبيق الطابعة أو نسخة APK.' };
+  }
+
+  if (!device) {
+    return { success: false, error: 'لم يتم اختيار طابعة.' };
+  }
+
+  // 4. Print bitmap
+  const printRes = await printImageToDevice(device, canvas);
+  return { success: printRes.success, device, error: printRes.error };
+}
+
