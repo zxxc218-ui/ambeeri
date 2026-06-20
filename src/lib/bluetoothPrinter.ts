@@ -301,48 +301,182 @@ export async function printReceiptDirectBluetooth(
     return { success: false, error: 'الطباعة المباشرة من المتصفح غير مدعومة لهذه الطابعة. استخدم تطبيق الطابعة أو نسخة APK.' };
   }
 
-  // 1. Get receipt HTML template
-  const element = document.getElementById('receipt-pdf-template');
-  if (!element) {
-    return { success: false, error: 'حدث خطأ أثناء العثور على قالب الوصل' };
-  }
-
-  // 2. Clone it and format for 80mm printer (576px width)
+  // 1. Create a dedicated container for thermal receipt
   const width = 576;
-  const clone = element.cloneNode(true) as HTMLDivElement;
-  clone.style.position = 'relative';
-  clone.style.left = '0';
-  clone.style.top = '0';
-  clone.style.width = width + 'px';
-  clone.style.maxWidth = width + 'px';
-  clone.style.boxShadow = 'none';
-  clone.style.border = 'none';
-  clone.style.borderRadius = '0';
-  clone.style.padding = '10px';
-  clone.style.margin = '0';
+  const container = document.createElement('div');
+  container.id = 'thermal-receipt-print-temp';
+  container.style.position = 'absolute';
+  container.style.left = '-9999px';
+  container.style.top = '-9999px';
+  container.style.width = width + 'px';
+  container.style.maxWidth = width + 'px';
+  container.style.boxSizing = 'border-box';
+  container.style.padding = '8px';
+  container.style.margin = '0';
+  container.style.backgroundColor = '#ffffff';
+  container.style.color = '#000000';
+  container.style.fontFamily = "'Arial', 'Cairo', sans-serif";
+  container.style.direction = 'rtl';
+  container.style.textAlign = 'right';
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+  container.style.gap = '6px';
+
+  // 2. Format variables safely
+  const ampsVal = parseFloat(paymentData.amps) || 0;
+  const ampPriceVal = parseFloat(paymentData.ampPrice) || 0;
+  const oldDebtVal = parseFloat(paymentData.oldDebt) || 0;
+  const monthAmountVal = parseFloat(paymentData.monthAmount) || (ampsVal * ampPriceVal);
+  const totalAmount = monthAmountVal + oldDebtVal;
   
-  // Make it high contrast black and white
-  clone.style.filter = 'grayscale(1) contrast(2)';
-  clone.style.color = '#000';
-  clone.style.backgroundColor = '#fff';
+  const receiptDate = paymentData.date ? new Date(paymentData.date).toLocaleDateString('ar-IQ', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric', 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  }) : '—';
   
-  document.body.appendChild(clone);
+  const showCurrentPayment = paymentData.currentPaymentAmount && paymentData.totalPaid && parseFloat(paymentData.currentPaymentAmount) !== parseFloat(paymentData.totalPaid);
+
+  container.innerHTML = `
+    <!-- Header -->
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; margin-bottom: 2px;">
+      <div style="display: flex; align-items: center; gap: 8px; justify-content: center; width: 100%;">
+        <img src="/ambeeri-logo.png" style="width: 50px; height: 50px; object-fit: contain;" alt="Ambeeri" />
+        <span style="font-size: 22px; font-weight: 900; color: #000000;">أمبيري | Ambeeri</span>
+      </div>
+      
+      ${paymentData.generatorLogo && paymentData.generatorLogo !== '/ambeeri-logo.png' ? `
+        <img src="${paymentData.generatorLogo}" style="width: 75px; height: 75px; object-fit: cover; border-radius: 50%; border: 3px solid #000000; margin-top: 4px;" alt="Logo" />
+      ` : ''}
+      
+      <h2 style="margin: 4px 0 2px 0; font-size: 28px; font-weight: 900; color: #000000; line-height: 1.1;">${paymentData.generatorName || 'نظام إدارة المولدة'}</h2>
+      
+      <div style="font-size: 16px; line-height: 1.3; color: #000000; font-weight: bold; margin-top: 2px; width: 100%;">
+        ${paymentData.generatorOwner ? `<div>صاحب المولدة: <strong>${paymentData.generatorOwner}</strong></div>` : ''}
+        ${paymentData.generatorPhone ? `<div>رقم الهاتف: <strong>${paymentData.generatorPhone}</strong></div>` : ''}
+        ${paymentData.generatorArea ? `<div>العنوان: <strong>${paymentData.generatorArea}</strong></div>` : ''}
+      </div>
+    </div>
+
+    <!-- Divider -->
+    <div style="border-top: 3px dashed #000000; margin: 4px 0; width: 100%;"></div>
+
+    <!-- Metadata Details -->
+    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 18px; font-weight: bold; color: #000000; width: 100%;">
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>رقم الوصل:</span>
+        <span style="font-family: monospace; font-size: 20px; font-weight: 900;">${paymentData.receiptNumber || '—'}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>رقم الفاتورة:</span>
+        <span style="font-family: monospace; font-size: 20px;">${paymentData.invoiceNumber || '—'}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>تاريخ التسديد:</span>
+        <span>${receiptDate}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>اسم المشترك:</span>
+        <span style="font-size: 20px; font-weight: 900; border-bottom: 1px solid #000000; padding-bottom: 2px;">${paymentData.subscriberName || '—'}</span>
+      </div>
+      ${paymentData.boardName ? `
+        <div style="display: flex; justify-content: space-between; width: 100%;">
+          <span>البورد:</span>
+          <span>${paymentData.boardName}</span>
+        </div>
+      ` : ''}
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>الشهر المسدد:</span>
+        <span style="font-size: 19px; font-weight: 900;">${paymentData.month} / ${paymentData.year}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>عدد الأمبيرات:</span>
+        <span style="font-size: 19px; font-weight: 900;">${paymentData.amps || '—'} أمبير</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>سعر الأمبير:</span>
+        <span>${(parseFloat(paymentData.ampPrice) || 0).toLocaleString('ar-IQ')} د.ع</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>الديون السابقة:</span>
+        <span>${(parseFloat(paymentData.oldDebt) || 0).toLocaleString('ar-IQ')} د.ع</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; border-top: 1px dashed #000000; padding-top: 6px; margin-top: 2px; font-weight: 900; width: 100%;">
+        <span>المبلغ الكلي المطلوب:</span>
+        <span>${totalAmount.toLocaleString('ar-IQ')} د.ع</span>
+      </div>
+      
+      ${showCurrentPayment ? `
+        <div style="display: flex; justify-content: space-between; color: #000000; font-weight: bold; width: 100%;">
+          <span>مبلغ هذه الدفعة:</span>
+          <span>${(parseFloat(paymentData.currentPaymentAmount) || 0).toLocaleString('ar-IQ')} د.ع</span>
+        </div>
+      ` : ''}
+      
+      <div style="display: flex; justify-content: space-between; border-top: 2px solid #000000; padding-top: 6px; font-weight: 900; font-size: 20px; width: 100%;">
+        <span>إجمالي المسدد:</span>
+        <span>${(parseFloat(paymentData.totalPaid) || parseFloat(paymentData.amount) || 0).toLocaleString('ar-IQ')} د.ع</span>
+      </div>
+    </div>
+
+    <!-- Amount Box -->
+    <div style="border: 4px solid #000000; border-radius: 12px; padding: 12px; margin: 8px 0; text-align: center; background-color: #ffffff; width: 100%; box-sizing: border-box;">
+      <div style="font-size: 17px; font-weight: bold; color: #000000; margin-bottom: 2px;">إجمالي المبلغ المسدد</div>
+      <div style="font-size: 42px; font-weight: 900; color: #000000;">
+        ${(parseFloat(paymentData.totalPaid) || parseFloat(paymentData.amount) || 0).toLocaleString('ar-IQ')} د.ع
+      </div>
+    </div>
+
+    <!-- Remaining Amount & Status -->
+    <div style="display: flex; flex-direction: column; gap: 6px; font-size: 18px; font-weight: bold; color: #000000; width: 100%; margin-bottom: 4px;">
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>حالة الدفع:</span>
+        <span style="font-weight: 900; font-size: 20px;">
+          ${paymentData.remainingAmount <= 0 ? 'تم تسديد الحساب بالكامل' : 'تسديد جزئي'}
+        </span>
+      </div>
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <span>المتبقي الكلي:</span>
+        <span style="font-weight: 900; font-size: 20px; color: #000000;">
+          ${(parseFloat(paymentData.remainingAmount) || 0).toLocaleString('ar-IQ')} د.ع
+        </span>
+      </div>
+      
+      ${paymentData.note ? `
+        <div style="border-top: 2px dashed #000000; padding-top: 6px; margin-top: 4px; width: 100%;">
+          <span style="font-size: 14px; display: block; margin-bottom: 2px;">ملاحظة:</span>
+          <span style="font-size: 16px; font-style: italic; display: block; background: #ffffff; padding: 6px; border: 2px solid #000000; border-radius: 6px;">
+            ${paymentData.note}
+          </span>
+        </div>
+      ` : ''}
+    </div>
+
+    <!-- Footer Message -->
+    <div style="text-align: center; border-top: 3px dashed #000000; padding-top: 10px; margin-top: 6px; font-size: 18px; font-weight: bold; width: 100%;">
+      شكراً لكم على تسديدكم.
+    </div>
+  `;
+
+  document.body.appendChild(container);
 
   let canvas: HTMLCanvasElement;
   try {
     const html2canvasLib = (await import('html2canvas')).default;
-    canvas = await html2canvasLib(clone, {
+    canvas = await html2canvasLib(container, {
       width: width,
-      scale: 1, // scale 1 for 576px direct bitmap printing
+      scale: 1, // scale 1:1 pixel mapping directly to printer dots (576px width)
       useCORS: true,
       backgroundColor: '#ffffff'
     });
   } catch (err: any) {
-    document.body.removeChild(clone);
+    document.body.removeChild(container);
     return { success: false, error: 'فشل تحويل الوصل لصورة: ' + err.message };
   }
 
-  document.body.removeChild(clone);
+  document.body.removeChild(container);
 
   // 3. Connect to printer
   let device: any;
