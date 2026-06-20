@@ -107,6 +107,7 @@ export async function POST(request: Request) {
     }
 
     // Process payment in a transaction
+    let updatedBill: any = null;
     const payment = await prisma.$transaction(async (tx) => {
       const finalAmps = amps ? parseInt(amps) : bill.amps;
       const finalAmpPrice = ampPrice ? parseInt(ampPrice) : bill.ampPrice;
@@ -123,7 +124,7 @@ export async function POST(request: Request) {
       }
 
       // Update bill
-      await tx.monthlyBill.update({
+      updatedBill = await tx.monthlyBill.update({
         where: { id: billId },
         data: {
           amps: finalAmps,
@@ -218,6 +219,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ 
       success: true, 
       payment, 
+      bill: updatedBill,
       warning, 
       isMissingCredentials,
       whatsappMessage,

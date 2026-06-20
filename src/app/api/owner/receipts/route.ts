@@ -34,7 +34,7 @@ export async function GET(request: Request) {
           select: { month: true, year: true, monthAmount: true, oldDebt: true, remainingAmount: true, paidAmount: true, invoiceNumber: true }
         },
         generator: {
-          select: { name: true, ownerName: true, phone: true, area: true }
+          select: { name: true, ownerName: true, phone: true, area: true, logoUrl: true }
         }
       }
     });
@@ -51,6 +51,8 @@ export async function GET(request: Request) {
     const receiptDate = new Date(payment.date).toLocaleDateString('ar-IQ', {
       year: 'numeric', month: 'long', day: 'numeric'
     });
+
+    const logoUrl = payment.generator?.logoUrl || '/ambeeri-logo.png';
 
     const html = `<!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -83,23 +85,45 @@ export async function GET(request: Request) {
       color: #10b981;
       padding: 20px 20px;
       text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
     }
-    .receipt-header h1 {
-      font-size: 1rem;
-      font-weight: 600;
+    .ambeeri-branding {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      margin-bottom: 8px;
+    }
+    .ambeeri-logo {
+      width: 45px;
+      height: 45px;
+      object-fit: contain;
+    }
+    .ambeeri-text {
+      font-size: 10px;
+      font-weight: 800;
       color: #10b981;
-      margin-bottom: 4px;
+      letter-spacing: 0.5px;
+      font-family: 'Cairo', sans-serif;
+    }
+    .generator-logo {
+      width: 60px;
+      height: 60px;
+      object-fit: cover;
+      border-radius: 50%;
+      margin: 4px auto;
+      border: 1px solid #e2e8f0;
+      display: block;
     }
     .receipt-header .gen-name {
-      font-size: 0.9rem;
-      font-weight: 600;
+      font-size: 1rem;
+      font-weight: 700;
       color: #333;
+      margin-top: 4px;
       margin-bottom: 2px;
-    }
-    .receipt-header .gen-phone {
-      font-size: 0.8rem;
-      color: #555;
-      margin-bottom: 6px;
     }
     .receipt-title {
       font-size: 27px;
@@ -299,7 +323,17 @@ export async function GET(request: Request) {
 
 <div class="receipt">
     <div class="receipt-header">
-      <h1>⚡ أمبيري | نظام إدارة المولدات</h1>
+      <!-- Ambeeri branding -->
+      <div class="ambeeri-branding">
+        <img class="ambeeri-logo" src="/ambeeri-logo.png" alt="Ambeeri" />
+        <span class="ambeeri-text">أمبيري | Ambeeri</span>
+      </div>
+
+      <!-- Generator logo (only if not fallback) -->
+      ${logoUrl && logoUrl !== '/ambeeri-logo.png' ? `
+      <img class="generator-logo" src="${logoUrl}" alt="الشعار" />
+      ` : ''}
+
       <div class="gen-name">${payment.generator?.name || ''}</div>
       <div class="owner-card">
         <div><span class="label">صاحب المولدة:</span> ${payment.generator?.ownerName || ''}</div>
@@ -348,7 +382,10 @@ export async function GET(request: Request) {
       <span class="label">ديون سابقة:</span>
       <span class="value">${(payment.bill?.oldDebt || 0).toLocaleString('ar-IQ')} د.ع</span>
     </div>
-
+    <div class="info-row" style="border-top: 1px dashed #cbd5e1; padding-top: 6px; margin-top: 4px; font-weight: bold;">
+      <span class="label">المبلغ الكلي المطلوب:</span>
+      <span class="value">${((payment.bill?.monthAmount || 0) + (payment.bill?.oldDebt || 0)).toLocaleString('ar-IQ')} د.ع</span>
+    </div>
     <div class="info-row">
       <span class="label">تاريخ الدفع:</span>
       <span class="value">${receiptDate}</span>
@@ -356,22 +393,37 @@ export async function GET(request: Request) {
   </div>
 
   <div class="amount-box">
-    <div class="amount-label">💵 المبلغ المستلم</div>
-    <div class="amount-value">${(payment.amount).toLocaleString('ar-IQ')}</div>
+    <div class="amount-label">💵 إجمالي المبلغ المسدد</div>
+    <div class="amount-value">${(payment.bill?.paidAmount || payment.amount).toLocaleString('ar-IQ')}</div>
     <div class="amount-currency">دينار عراقي</div>
   </div>
 
   ${payment.note ? `<div class="note-box">📝 ملاحظة: ${payment.note}</div>` : ''}
 
-  ${(payment.bill?.remainingAmount || 0) > 0 ? `
-  <div class="remaining-row">
-    <span class="label">⚠️ المتبقي بعد هذه الدفعة:</span>
-    <span class="value">${(payment.bill?.remainingAmount || 0).toLocaleString('ar-IQ')} د.ع</span>
-  </div>` : `
-  <div class="remaining-row" style="background:#ecfdf5; border-color:#10b981;">
-    <span style="color:#047857;">✅ تم تسديد الفاتورة كاملاً</span>
-    <span style="color:#047857; font-weight:700;">مدفوع بالكامل</span>
-  </div>`}
+  <div class="section" style="border-bottom: none; padding-top: 0;">
+    ${payment.bill?.paidAmount && payment.bill.paidAmount !== payment.amount ? `
+    <div class="info-row" style="color: #0284c7;">
+      <span class="label">مبلغ هذه الدفعة:</span>
+      <span class="value" style="font-weight: bold;">${payment.amount.toLocaleString('ar-IQ')} د.ع</span>
+    </div>
+    ` : ''}
+    <div class="info-row" style="color: #166534; font-weight: bold;">
+      <span class="label">إجمالي المسدد:</span>
+      <span class="value">${(payment.bill?.paidAmount || payment.amount).toLocaleString('ar-IQ')} د.ع</span>
+    </div>
+    <div class="info-row">
+      <span class="label">حالة الدفع:</span>
+      <span class="value" style="color: ${payment.bill?.remainingAmount <= 0 ? '#10b981' : '#f59e0b'}; font-weight: bold;">
+        ${payment.bill?.remainingAmount <= 0 ? 'تم تسديد الحساب بالكامل' : 'تسديد جزئي'}
+      </span>
+    </div>
+    <div class="info-row">
+      <span class="label">المتبقي الكلي:</span>
+      <span class="value" style="color: ${payment.bill?.remainingAmount > 0 ? '#ef4444' : '#10b981'}; font-weight: bold;">
+        ${(payment.bill?.remainingAmount || 0).toLocaleString('ar-IQ')} د.ع
+      </span>
+    </div>
+  </div>
 
   <div class="btn-row no-print">
     <button class="btn-pdf" onclick="generatePDF()">💾 حفظ PDF</button>
@@ -464,7 +516,7 @@ export async function GET(request: Request) {
     const generatorName = '${payment.generator?.name || 'أمبيري'}';
     const subscriberName = '${payment.subscriber?.name || ''}';
     const monthStr = '${payment.bill?.month} / ${payment.bill?.year}';
-    const amountPaid = '${(payment.amount || 0).toLocaleString('ar-IQ')}';
+    const amountPaid = '${(payment.bill?.paidAmount || payment.amount || 0).toLocaleString('ar-IQ')}';
     const remainingAmount = '${(payment.bill?.remainingAmount || 0).toLocaleString('ar-IQ')}';
     const receiptNumber = '${payment.receiptNumber || '—'}';
     const receiptUrl = 'https://ambeeri.vercel.app/api/receipts/${payment.id}/pdf';

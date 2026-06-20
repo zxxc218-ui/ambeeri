@@ -80,14 +80,41 @@ export async function GET(
       border-bottom: 2px solid #10b981;
       padding-bottom: 16px;
       margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ambeeri-branding {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      margin-bottom: 8px;
+    }
+
+    .ambeeri-logo {
+      width: 50px;
+      height: 50px;
+      object-fit: contain;
+    }
+
+    .ambeeri-text {
+      font-size: 10px;
+      font-weight: 800;
+      color: #10b981;
+      letter-spacing: 0.5px;
+      font-family: 'Cairo', sans-serif;
     }
 
     .generator-logo {
-      width: 90px;
-      height: 90px;
-      object-fit: contain;
-      border-radius: 16px;
-      margin-bottom: 12px;
+      width: 65px;
+      height: 65px;
+      object-fit: cover;
+      border-radius: 50%;
+      margin-top: 4px;
+      margin-bottom: 4px;
       box-shadow: 0 4px 6px rgba(0,0,0,0.05);
       border: 1px solid #e2e8f0;
     }
@@ -286,7 +313,17 @@ export async function GET(
 
 <div class="receipt-container">
   <div class="header-section">
-    <img class="generator-logo" src="${logoUrl}" alt="الشعار" onerror="this.src='/ambeeri-logo.png'" />
+    <!-- Ambeeri branding -->
+    <div class="ambeeri-branding">
+      <img class="ambeeri-logo" src="/ambeeri-logo.png" alt="Ambeeri" />
+      <span class="ambeeri-text">أمبيري | Ambeeri</span>
+    </div>
+
+    <!-- Generator logo (only if not fallback) -->
+    ${logoUrl && logoUrl !== '/ambeeri-logo.png' ? `
+    <img class="generator-logo" src="${logoUrl}" alt="الشعار" />
+    ` : ''}
+
     <div class="generator-name">${payment.generator?.name || 'مولدة أمبيري'}</div>
     <div class="generator-info-list">
       <div>صاحب المولدة: <strong>${payment.generator?.ownerName || '—'}</strong></div>
@@ -356,20 +393,30 @@ export async function GET(
   </div>
 
   <div class="amount-box">
-    <div class="amount-title">المبلغ المسدد</div>
-    <div class="amount-val">${(payment.amount || 0).toLocaleString('ar-IQ')}<span class="currency">د.ع</span></div>
+    <div class="amount-title">إجمالي المبلغ المسدد</div>
+    <div class="amount-val">${(payment.bill?.paidAmount || payment.amount || 0).toLocaleString('ar-IQ')}<span class="currency">د.ع</span></div>
   </div>
 
   <div class="info-grid">
+    ${payment.bill?.paidAmount && payment.bill.paidAmount !== payment.amount ? `
+    <div class="info-row" style="color: #0284c7;">
+      <span class="info-label">مبلغ هذه الدفعة:</span>
+      <span class="info-value" style="font-weight: bold;">${payment.amount.toLocaleString('ar-IQ')} د.ع</span>
+    </div>
+    ` : ''}
+    <div class="info-row" style="color: #166534; font-weight: bold;">
+      <span class="info-label">إجمالي المسدد:</span>
+      <span class="info-value">${(payment.bill?.paidAmount || payment.amount || 0).toLocaleString('ar-IQ')} د.ع</span>
+    </div>
     <div class="info-row">
       <span class="info-label">حالة الدفع:</span>
-      <span class="info-value" style="color: ${payment.bill?.remainingAmount <= 0 ? '#10b981' : '#f59e0b'}">
+      <span class="info-value" style="color: ${payment.bill?.remainingAmount <= 0 ? '#10b981' : '#f59e0b'}; font-weight: bold;">
         ${payment.bill?.remainingAmount <= 0 ? 'تم تسديد الحساب بالكامل' : 'تسديد جزئي'}
       </span>
     </div>
     <div class="info-row">
       <span class="info-label">المتبقي الكلي:</span>
-      <span class="info-value" style="color: ${payment.bill?.remainingAmount > 0 ? '#ef4444' : '#10b981'}">
+      <span class="info-value" style="color: ${payment.bill?.remainingAmount > 0 ? '#ef4444' : '#10b981'}; font-weight: bold;">
         ${(payment.bill?.remainingAmount || 0).toLocaleString('ar-IQ')} د.ع
       </span>
     </div>
@@ -384,9 +431,12 @@ export async function GET(
 <div class="btn-row">
   <button class="action-btn btn-download" onclick="downloadPDF()">حفظ الوصل PDF</button>
   <button class="action-btn btn-print" onclick="window.print()">طباعة الوصل</button>
+  <button class="action-btn btn-thermal" onclick="printThermal(384)" style="background: #f59e0b; color: #fff;">طباعة حرارية 58mm</button>
+  <button class="action-btn btn-thermal" onclick="printThermal(576)" style="background: #d97706; color: #fff;">طباعة حرارية 80mm</button>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
   function showLoading() {
     document.getElementById('loadingOverlay').classList.add('show');
@@ -416,6 +466,72 @@ export async function GET(
       hideLoading();
       alert('حدث خطأ أثناء تحميل الملف');
     });
+  }
+
+  async function printThermal(width) {
+    const element = document.querySelector('.receipt-container');
+    const btns = document.querySelector('.btn-row');
+    btns.style.display = 'none';
+    showLoading();
+    
+    try {
+      const clone = element.cloneNode(true);
+      clone.style.width = width + 'px';
+      clone.style.maxWidth = width + 'px';
+      clone.style.boxShadow = 'none';
+      clone.style.border = 'none';
+      clone.style.borderRadius = '0';
+      clone.style.padding = '10px';
+      clone.style.margin = '0';
+      
+      // Make it high contrast black and white
+      clone.style.filter = 'grayscale(1) contrast(2)';
+      clone.style.color = '#000';
+      clone.style.background = '#fff';
+      
+      document.body.appendChild(clone);
+      
+      const canvas = await html2canvas(clone, {
+        width: width,
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff'
+      });
+      
+      document.body.removeChild(clone);
+      
+      const imgData = canvas.toDataURL('image/png');
+      
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        printWindow.document.write(
+          '<html>' +
+          '<head>' +
+          '  <title>طباعة حرارية</title>' +
+          '  <style>' +
+          '    * { margin: 0; padding: 0; }' +
+          '    body { display: flex; justify-content: center; background: #fff; }' +
+          '    img { width: 100%; max-width: ' + width + 'px; height: auto; filter: grayscale(1) contrast(2); }' +
+          '    @media print {' +
+          '      body { margin: 0; }' +
+          '      @page { margin: 0; }' +
+          '    }' +
+          '  </style>' +
+          '</head>' +
+          '<body>' +
+          '  <img src="' + imgData + '" onload="window.print(); window.close();" />' +
+          '</body>' +
+          '</html>'
+        );
+        printWindow.document.close();
+      }
+    } catch (err) {
+      console.error(err);
+      alert('حدث خطأ أثناء الطباعة الحرارية');
+    } finally {
+      btns.style.display = 'flex';
+      hideLoading();
+    }
   }
 </script>
 </body>

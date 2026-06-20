@@ -175,6 +175,88 @@ export default function SubscriberDetailPage() {
       setDownloadingPDF(false);
     }
   };
+
+  const handleThermalPrint = async (paymentData: any, width: number) => {
+    if (!paymentData) return;
+    try {
+      const element = document.getElementById('receipt-pdf-template');
+      if (!element) {
+        alert('حدث خطأ أثناء العثور على قالب الوصل');
+        return;
+      }
+      
+      const clone = element.cloneNode(true) as HTMLDivElement;
+      clone.style.position = 'relative';
+      clone.style.left = '0';
+      clone.style.top = '0';
+      clone.style.width = width + 'px';
+      clone.style.maxWidth = width + 'px';
+      clone.style.boxShadow = 'none';
+      clone.style.border = 'none';
+      clone.style.borderRadius = '0';
+      clone.style.padding = '10px';
+      clone.style.margin = '0';
+      
+      // Make it high contrast black and white
+      clone.style.filter = 'grayscale(1) contrast(2)';
+      clone.style.color = '#000';
+      clone.style.backgroundColor = '#fff';
+      
+      document.body.appendChild(clone);
+      
+      const html2canvasLib = (await import('html2canvas')).default;
+      const canvas = await html2canvasLib(clone, {
+        width: width,
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff'
+      });
+      
+      document.body.removeChild(clone);
+      
+      const imgData = canvas.toDataURL('image/png');
+      
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        printWindow.document.write(`
+          <html>
+          <head>
+            <title>طباعة حرارية</title>
+            <style>
+              * { margin: 0; padding: 0; }
+              body { display: flex; justify-content: center; background: #fff; }
+              img { width: 100%; max-width: ${width}px; height: auto; filter: grayscale(1) contrast(2); }
+              @media print {
+                body { margin: 0; }
+                @page { margin: 0; }
+              }
+            </style>
+          </head>
+          <body>
+            <img src="${imgData}" onload="window.print(); window.close();" />
+          </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
+      
+      // Log print action
+      await fetch('/api/owner/print-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          billId: paymentData.billId,
+          paymentId: paymentData.paymentId,
+          printerType: `THERMAL_${width}MM`,
+          status: 'SUCCESS'
+        })
+      });
+    } catch (error) {
+      console.error('Thermal print error:', error);
+      alert('حدث خطأ أثناء الطباعة الحرارية. يرجى المحاولة مرة أخرى.');
+    }
+  };
+
   const handleWhatsappShare = async (paymentData: any) => {
     if (!paymentData) return;
     
@@ -189,7 +271,7 @@ export default function SubscriberDetailPage() {
     const generatorName = paymentData.generatorName || subscriber?.generator?.name || 'أمبيري';
     const subscriberName = paymentData.subscriberName;
     const monthStr = `${paymentData.month} / ${paymentData.year}`;
-    const amountPaid = (paymentData.amount || 0).toLocaleString('ar-IQ');
+    const amountPaid = (paymentData.totalPaid || paymentData.amount || 0).toLocaleString('ar-IQ');
     const remainingAmount = (paymentData.remainingAmount || 0).toLocaleString('ar-IQ');
     const receiptNumber = paymentData.receiptNumber || '—';
 
@@ -230,7 +312,7 @@ export default function SubscriberDetailPage() {
       const generatorName = p.generator?.name || subscriber?.generator?.name || 'أمبيري';
       const subscriberName = p.subscriber?.name || '';
       const monthStr = `${p.bill?.month || ''} / ${p.bill?.year || ''}`;
-      const amountPaid = (p.amount || 0).toLocaleString('ar-IQ');
+      const amountPaid = (p.bill?.paidAmount || p.amount || 0).toLocaleString('ar-IQ');
       const remainingAmount = (p.bill?.remainingAmount || 0).toLocaleString('ar-IQ');
       const receiptNumber = p.receiptNumber || '—';
 
@@ -273,6 +355,8 @@ export default function SubscriberDetailPage() {
         invoiceNumber: p.bill?.invoiceNumber || '',
         date: p.date,
         amount: p.amount,
+        currentPaymentAmount: p.amount,
+        totalPaid: p.bill?.paidAmount || p.amount,
         remainingAmount: p.bill?.remainingAmount || 0,
         subscriberName: subscriber?.name || '',
         phone: subscriber?.phone || '',
@@ -288,7 +372,8 @@ export default function SubscriberDetailPage() {
         note: p.note || '',
         amps: subscriber?.amps?.toString() || p.bill?.amps?.toString() || '0',
         ampPrice: p.bill?.ampPrice || 0,
-        oldDebt: p.bill?.oldDebt || 0
+        oldDebt: p.bill?.oldDebt || 0,
+        monthAmount: p.bill?.monthAmount || 0
       };
 
       setPdfReceiptData(receiptData);
@@ -332,7 +417,9 @@ export default function SubscriberDetailPage() {
           invoiceNumber: selectedBill.invoiceNumber,
           date: data.payment.date,
           amount: data.payment.amount,
-          remainingAmount: selectedBill.remainingAmount - data.payment.amount <= 0 ? 0 : selectedBill.remainingAmount - data.payment.amount,
+          currentPaymentAmount: data.payment.amount,
+          totalPaid: data.bill?.paidAmount || data.payment.amount,
+          remainingAmount: data.bill?.remainingAmount !== undefined ? data.bill.remainingAmount : (selectedBill.remainingAmount - data.payment.amount <= 0 ? 0 : selectedBill.remainingAmount - data.payment.amount),
           subscriberName: subscriber.name || '',
           phone: subscriber.phone || '',
           boardName: subscriber.board?.name || '',
@@ -707,13 +794,23 @@ export default function SubscriberDetailPage() {
             return (
               <>
                 {/* Header */}
-                <div style={{ textAlign: 'center', borderBottom: '2px solid #10b981', paddingBottom: '12px', marginBottom: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <img 
-                    src={activeReceipt.generatorLogo || subscriber?.generator?.logoUrl || '/ambeeri-logo.png'} 
-                    alt="الشعار" 
-                    style={{ width: '70px', height: '70px', objectFit: 'contain', borderRadius: '12px', marginBottom: '8px', border: '1px solid #e5e7eb' }} 
-                  />
-                  <h4 style={{ margin: 0, color: '#374151', fontSize: '15px', fontWeight: 'bold' }}>{activeReceipt.generatorName || subscriber?.generator?.name || 'نظام إدارة المولدة'}</h4>
+                <div style={{ textAlign: 'center', borderBottom: '2px solid #10b981', paddingBottom: '12px', marginBottom: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                  {/* Ambeeri Branding */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                    <img src="/ambeeri-logo.png" style={{ width: '45px', height: '45px', objectFit: 'contain' }} alt="Ambeeri" />
+                    <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#10b981', fontFamily: 'Cairo' }}>أمبيري | Ambeeri</span>
+                  </div>
+
+                  {/* Generator logo if exists and not fallback */}
+                  {activeReceipt.generatorLogo && activeReceipt.generatorLogo !== '/ambeeri-logo.png' && (
+                    <img 
+                      style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '50%', border: '1px solid #e5e7eb', marginTop: '4px' }} 
+                      src={activeReceipt.generatorLogo} 
+                      alt="Generator Logo" 
+                    />
+                  )}
+
+                  <h4 style={{ margin: '4px 0 0 0', color: '#374151', fontSize: '15px', fontWeight: 'bold' }}>{activeReceipt.generatorName || subscriber?.generator?.name || 'نظام إدارة المولدة'}</h4>
                   
                   {/* Owner Info Block */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '6px', fontSize: '12px', color: '#4b5563', width: '100%' }}>
@@ -771,13 +868,23 @@ export default function SubscriberDetailPage() {
                     <span style={{ color: '#111827' }}>المبلغ الكلي المطلوب:</span>
                     <span style={{ color: '#111827' }}>{((activeReceipt.monthAmount || (activeReceipt.amps * activeReceipt.ampPrice) || 0) + (activeReceipt.oldDebt || 0)).toLocaleString('ar-IQ')} د.ع</span>
                   </div>
+                  {activeReceipt.currentPaymentAmount && activeReceipt.totalPaid && activeReceipt.currentPaymentAmount !== activeReceipt.totalPaid && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px', color: '#0284c7' }}>
+                      <span>مبلغ هذه الدفعة:</span>
+                      <span style={{ fontWeight: 'bold' }}>{(activeReceipt.currentPaymentAmount || 0).toLocaleString('ar-IQ')} د.ع</span>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px', color: '#166534', fontWeight: 'bold' }}>
+                    <span>إجمالي المسدد:</span>
+                    <span style={{ fontWeight: 'bold' }}>{(activeReceipt.totalPaid || activeReceipt.amount || 0).toLocaleString('ar-IQ')} د.ع</span>
+                  </div>
                 </div>
 
                 {/* Amount Box */}
                 <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '16px', margin: '18px 0', textAlign: 'center' }}>
-                  <div style={{ fontSize: '13px', color: '#15803d', marginBottom: '4px', fontWeight: 'bold' }}>المبلغ المسدد</div>
+                  <div style={{ fontSize: '13px', color: '#15803d', marginBottom: '4px', fontWeight: 'bold' }}>إجمالي المبلغ المسدد</div>
                   <div style={{ fontSize: '32px', fontWeight: '800', color: '#166534' }}>
-                    {activeReceipt.amount ? (activeReceipt.amount).toLocaleString('ar-IQ') : '0'} د.ع
+                    {(activeReceipt.totalPaid || activeReceipt.amount || 0).toLocaleString('ar-IQ')} د.ع
                   </div>
                 </div>
 
@@ -787,9 +894,9 @@ export default function SubscriberDetailPage() {
                     <span style={{ color: '#6b7280' }}>حالة الدفع:</span>
                     <span style={{ 
                       fontWeight: 'bold', 
-                      color: activeReceipt.remainingAmount <= 0 ? '#15803d' : (activeReceipt.amount > 0 ? '#d97706' : '#ef4444') 
+                      color: activeReceipt.remainingAmount <= 0 ? '#15803d' : ((activeReceipt.totalPaid || activeReceipt.amount) > 0 ? '#d97706' : '#ef4444') 
                     }}>
-                      {activeReceipt.remainingAmount <= 0 ? 'تم تسديد الحساب بالكامل' : (activeReceipt.amount > 0 ? 'تسديد جزئي' : 'غير مسدد')}
+                      {activeReceipt.remainingAmount <= 0 ? 'تم تسديد الحساب بالكامل' : ((activeReceipt.totalPaid || activeReceipt.amount) > 0 ? 'تسديد جزئي' : 'غير مسدد')}
                     </span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px dashed #e5e7eb', paddingBottom: '4px' }}>
@@ -882,38 +989,24 @@ export default function SubscriberDetailPage() {
                 </button>
 
                 {(!user || !user.role || user.role === 'OWNER' || (user.permissions && user.permissions.print_receipt)) && (
-                  <button 
-                    type="button" 
-                    className="btn btn-primary"
-                    disabled={printingBluetooth}
-                    onClick={async () => {
-                      setPrintingBluetooth(true);
-                      const res = await printReceiptBluetooth(paymentSuccessData);
-                      setPrintingBluetooth(false);
-                      
-                      // Log print action
-                      await fetch('/api/owner/print-logs', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          billId: paymentSuccessData.billId,
-                          paymentId: paymentSuccessData.paymentId,
-                          printerType: 'BLUETOOTH',
-                          status: res.success ? 'SUCCESS' : 'FAILED',
-                          errorMessage: res.error || null
-                        })
-                      });
-                      
-                      if (res.success) {
-                        alert('تمت عملية الطباعة بنجاح!');
-                      } else {
-                        alert(`الطباعة عبر البلوتوث غير مدعومة على هذا الجهاز أو فشل الاتصال. ${res.error}\nيمكنك طباعة الوصل من المتصفح.`);
-                      }
-                    }}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
-                  >
-                    <Printer size={16} /> {printingBluetooth ? 'جاري...' : 'طباعة الوصل'}
-                  </button>
+                  <>
+                    <button 
+                      type="button" 
+                      className="btn btn-secondary"
+                      onClick={() => handleThermalPrint(paymentSuccessData, 384)}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
+                    >
+                      <Printer size={16} /> طباعة حرارية (58mm)
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn btn-secondary"
+                      onClick={() => handleThermalPrint(paymentSuccessData, 576)}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px', fontSize: '.85rem' }}
+                    >
+                      <Printer size={16} /> طباعة حرارية (80mm)
+                    </button>
+                  </>
                 )}
               </div>
               
